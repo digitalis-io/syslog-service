@@ -1,4 +1,5 @@
-# syslog-service
+Syslog-Service
+======================
 Go based Syslog service that can run within an infrastructure role on Mesos.
 
 Pre-Requisites
@@ -14,48 +15,81 @@ Build Instructions
 - Get the project
 ```
 $ cd $GOPATH/src/
-$ mkdir -p github.com/CiscoCloud
-$ cd github.com/CiscoCloud
-$ git clone https://github.com/CiscoCloud/syslog-service.git
+$ mkdir -p github.com/stealthly
+$ cd github.com/stealthly
+$ git clone https://github.com/stealthly/syslog-service.git
 $ cd syslog-service
 ```
 
 - Build the scheduler and the executor
 ```
-$ go build framework.go
+$ go build cli.go
 $ go build executor.go
 ```
-- Package the executor (**make sure the built binary has executable permissions before this step!**)
-```
-$ zip -r executor.zip executor
-```
-- Place the built framework and executor archive somewhere on Mesos Master node
 
-Running
-=======
+Usage
+-----
 
-You will need a running Mesos master and slaves to run. The following commands should be launched on Mesos Master node.
+Syslog framework ships with command-line utility to manage schedulers and executors:
+
+    # ./cli help
+    Usage:
+        help: show this message
+        scheduler: configure and start scheduler
+        start: start syslog servers
+        stop: stop syslog servers
+        update: update configuration
+        status: get current status of cluster
+    More help you can get from ./cli <command> -h
+
+
+Scheduler Configuration
+-----------------------
+
+The scheduler is configured through the command line.
+
+    # ./cli scheduler <options>
+
+Following options are available:
+
+    -master="": Mesos Master addresses.
+    -api="": Binding host:port for http/artifact server. Optional if SM_API env is set.
+    -user="": Mesos user. Defaults to current system user.
+    -log.level="info": Log level. trace|debug|info|warn|error|critical. Defaults to info.
+    -framework.name="syslog-kafka": Framework name.
+    -framework.role="*": Framework role.
+
+Starting and Stopping Framework
+------------------------------
+
+    # ./cli start|stop <options>
+
+Options available:
+
+    -api="": Binding host:port for http/artifact server. Optional if SM_API env is set.
+
+Updating Server Preferences
+---------------------------
+
+    # ./cli update <options>
+
+Following options are available:
+
+    -api: Binding host:port for http/artifact server. Optional if SM_API env is set.
+    -producer.properties: Producer.properties file name.
+	--broker.list: Kafka broker list separated by comma.
+	-topic: Topic to produce data to.
+	-tcp.port: TCP port range to accept.
+	-udp.port: UDP port range to accept.
+	-num.producers: Number of producers to launch.
+	-channel.size: Producer buffer size.
+
+Quick start:
+-----------
 
 ```
-$ cd <framework-location>
-$ ./framework --master master:5050 --producer.config producer.config --topic syslog
-```
-
-*List of available flags:*
-
-```
---artifact.host="master": Binding host for artifact server.
---artifact.port=6666: Binding port for artifact server.
---cpu.per.task=0.2: CPUs per task.
---executor.archive="executor.zip": Executor archive name. Absolute or relative path are both ok.
---executor.name="executor": Executor binary name contained in archive.
---instances=1: Number of tasks to run.
---master="master:5050": Mesos Master address <ip:port>.
---mem.per.task=256: Memory per task.
---producer.config: Producer properties file name.
---sync: Flag to respond only after decoding-encoding is done.
---topic: Topic to produce transformed data to.
---broker.list: If you are not using kafka-mesos, comma-separated list of brokers (ip:port).
---user="vagrant": User to run executor.
---log.level="info": Set logging level.
+# export SM_API=http://master:6666
+# ./cli scheduler --master master:5050
+# ./cli update --broker.list 192.168.3.1:9092 --topic syslog
+# ./cli start
 ```
