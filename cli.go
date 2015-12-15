@@ -87,12 +87,11 @@ func handleStatus() error {
 
 func handleScheduler() error {
 	var api string
-	var user string
 	var logLevel string
 
 	flag.StringVar(&syslog.Config.Master, "master", "", "Mesos Master addresses.")
 	flag.StringVar(&api, "api", "", "Binding host:port for http/artifact server. Optional if SM_API env is set.")
-	flag.StringVar(&user, "user", "", "Mesos user. Defaults to current system user")
+	flag.StringVar(&syslog.Config.User, "user", "", "Mesos user. Defaults to current system user")
 	flag.StringVar(&logLevel, "log.level", syslog.Config.LogLevel, "Log level. trace|debug|info|warn|error|critical. Defaults to info.")
 	flag.StringVar(&syslog.Config.FrameworkName, "framework.name", syslog.Config.FrameworkName, "Framework name.")
 	flag.StringVar(&syslog.Config.FrameworkRole, "framework.role", syslog.Config.FrameworkRole, "Framework role.")
