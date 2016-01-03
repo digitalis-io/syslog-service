@@ -16,110 +16,123 @@ limitations under the License. */
 package syslog
 
 import (
-	"fmt"
+	"os"
 
+	"fmt"
 	"github.com/mesos/mesos-go/executor"
 	mesos "github.com/mesos/mesos-go/mesosproto"
+	kafka "github.com/stealthly/go_kafka_client"
+	"time"
 )
 
-type StartStoper interface {
-	Start()
-	Stop()
+type Executor struct {
+	tcpPort  int
+	udpPort  int
+	producer *kafka.SyslogProducer
+	close    chan struct{}
 }
 
-type SyslogExecutor struct {
-	producer StartStoper
-	close    chan bool
-}
-
-// Creates a new SyslogExecutor with a given config.
-func NewSyslogExecutor(producer StartStoper) *SyslogExecutor {
-	return &SyslogExecutor{
-		producer: producer,
-		close:    make(chan bool),
+func NewExecutor(tcpPort int, udpPort int) *Executor {
+	return &Executor{
+		tcpPort: tcpPort,
+		udpPort: udpPort,
+		close:   make(chan struct{}, 1),
 	}
 }
 
-// mesos.Executor interface method.
-// Invoked once the executor driver has been able to successfully connect with Mesos.
-func (se *SyslogExecutor) Registered(driver executor.ExecutorDriver, execInfo *mesos.ExecutorInfo, fwinfo *mesos.FrameworkInfo, slaveInfo *mesos.SlaveInfo) {
-	fmt.Printf("Registered Executor on slave %s\n", slaveInfo.GetHostname())
+func (e *Executor) Registered(driver executor.ExecutorDriver, executor *mesos.ExecutorInfo, framework *mesos.FrameworkInfo, slave *mesos.SlaveInfo) {
+	Logger.Infof("[Registered] framework: %s slave: %s", framework.GetId().GetValue(), slave.GetId().GetValue())
 }
 
-// mesos.Executor interface method.
-// Invoked when the executor re-registers with a restarted slave.
-func (se *SyslogExecutor) Reregistered(driver executor.ExecutorDriver, slaveInfo *mesos.SlaveInfo) {
-	fmt.Printf("Re-registered Executor on slave %s\n", slaveInfo.GetHostname())
+func (e *Executor) Reregistered(driver executor.ExecutorDriver, slave *mesos.SlaveInfo) {
+	Logger.Infof("[Reregistered] slave: %s", slave.GetId().GetValue())
 }
 
-// mesos.Executor interface method.
-// Invoked when the executor becomes "disconnected" from the slave.
-func (se *SyslogExecutor) Disconnected(executor.ExecutorDriver) {
-	fmt.Println("Executor disconnected.")
+func (e *Executor) Disconnected(executor.ExecutorDriver) {
+	Logger.Info("[Disconnected]")
 }
 
-// mesos.Executor interface method.
-// Invoked when a task has been launched on this executor.
-func (se *SyslogExecutor) LaunchTask(driver executor.ExecutorDriver, taskInfo *mesos.TaskInfo) {
-	fmt.Printf("Launching task %s with command %s\n", taskInfo.GetName(), taskInfo.Command.GetValue())
+func (e *Executor) LaunchTask(driver executor.ExecutorDriver, task *mesos.TaskInfo) {
+	Logger.Infof("[LaunchTask] %s", task)
+
+	Config.Read(task)
 
 	runStatus := &mesos.TaskStatus{
-		TaskId: taskInfo.GetTaskId(),
+		TaskId: task.GetTaskId(),
 		State:  mesos.TaskState_TASK_RUNNING.Enum(),
 	}
 
 	if _, err := driver.SendStatusUpdate(runStatus); err != nil {
-		fmt.Printf("Failed to send status update: %s\n", runStatus)
+		Logger.Errorf("Failed to send status update: %s", runStatus)
 	}
 
 	go func() {
-		go se.producer.Start()
-		<-se.close
-		se.producer.Stop()
+		e.producer = e.newSyslogProducer()
+		e.producer.Start()
+		<-e.close
 
 		// finish task
-		fmt.Printf("Finishing task %s\n", taskInfo.GetName())
+		Logger.Infof("Finishing task %s", task.GetName())
 		finStatus := &mesos.TaskStatus{
-			TaskId: taskInfo.GetTaskId(),
+			TaskId: task.GetTaskId(),
 			State:  mesos.TaskState_TASK_FINISHED.Enum(),
 		}
 		if _, err := driver.SendStatusUpdate(finStatus); err != nil {
-			fmt.Printf("Failed to send status update: %s\n", finStatus)
+			Logger.Errorf("Failed to send status update: %s", finStatus)
+			os.Exit(1)
 		}
-		fmt.Printf("Task %s has finished\n", taskInfo.GetName())
+		Logger.Infof("Task %s has finished", task.GetName())
+		time.Sleep(time.Second)
+		os.Exit(0)
 	}()
 }
 
-// mesos.Executor interface method.
-// Invoked when a task running within this executor has been killed.
-func (se *SyslogExecutor) KillTask(_ executor.ExecutorDriver, taskId *mesos.TaskID) {
-	fmt.Println("Kill task")
+func (e *Executor) KillTask(driver executor.ExecutorDriver, id *mesos.TaskID) {
+	Logger.Infof("[KillTask] %s", id.GetValue())
+	e.producer.Stop()
+	e.close <- struct{}{}
+}
 
-	select {
-	case se.close <- true:
-	default:
+func (e *Executor) FrameworkMessage(driver executor.ExecutorDriver, message string) {
+	Logger.Infof("[FrameworkMessage] %s", message)
+}
+
+func (e *Executor) Shutdown(driver executor.ExecutorDriver) {
+	Logger.Infof("[Shutdown]")
+	e.producer.Stop()
+	e.close <- struct{}{}
+}
+
+func (e *Executor) Error(driver executor.ExecutorDriver, message string) {
+	Logger.Errorf("[Error] %s", message)
+}
+
+func (e *Executor) newSyslogProducer() *kafka.SyslogProducer {
+	config := kafka.NewSyslogProducerConfig()
+	conf, err := kafka.ProducerConfigFromFile(Config.ProducerProperties)
+	useFile := true
+	if err != nil {
+		//we dont have a producer configuraiton which is ok
+		useFile = false
+	} else {
+		if err = conf.Validate(); err != nil {
+			panic(err)
+		}
 	}
-}
 
-// mesos.Executor interface method.
-// Invoked when a framework message has arrived for this executor.
-func (se *SyslogExecutor) FrameworkMessage(driver executor.ExecutorDriver, msg string) {
-	fmt.Printf("Got framework message: %s\n", msg)
-}
-
-// mesos.Executor interface method.
-// Invoked when the executor should terminate all of its currently running tasks.
-func (se *SyslogExecutor) Shutdown(executor.ExecutorDriver) {
-	fmt.Println("Shutting down the executor")
-
-	select {
-	case se.close <- true:
-	default:
+	if useFile {
+		config.ProducerConfig = conf
+	} else {
+		config.ProducerConfig = kafka.DefaultProducerConfig()
+		config.ProducerConfig.Acks = 1
+		config.ProducerConfig.Timeout = time.Second
 	}
-}
+	config.NumProducers = 1    //TODO configurable
+	config.ChannelSize = 10000 //TODO configurable
+	config.BrokerList = Config.BrokerList
+	config.TCPAddr = fmt.Sprintf("0.0.0.0:%d", e.tcpPort)
+	config.UDPAddr = fmt.Sprintf("0.0.0.0:%d", e.udpPort)
+	config.Topic = Config.Topic
 
-// mesos.Executor interface method.
-// Invoked when a fatal error has occured with the executor and/or executor driver.
-func (se *SyslogExecutor) Error(driver executor.ExecutorDriver, err string) {
-	fmt.Printf("Got error message: %s\n", err)
+	return kafka.NewSyslogProducer(config)
 }

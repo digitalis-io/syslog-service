@@ -16,193 +16,345 @@ limitations under the License. */
 package syslog
 
 import (
+	crand "crypto/rand"
+	"encoding/json"
 	"fmt"
-	"log"
-
-	"strconv"
+	"io/ioutil"
+	"os"
+	"os/signal"
 	"strings"
-	"sync/atomic"
+	"sync"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/elodina/go-mesos-utils"
+	"github.com/elodina/go-mesos-utils/pretty"
+	"github.com/golang/protobuf/proto"
 	mesos "github.com/mesos/mesos-go/mesosproto"
 	util "github.com/mesos/mesos-go/mesosutil"
 	"github.com/mesos/mesos-go/scheduler"
 )
 
-type SyslogScheduler struct {
-	config           SyslogSchedulerConfig
-	runningInstances int32
-	tasks            []*mesos.TaskID
+var sched *Scheduler // This is needed for HTTP server to be able to update this scheduler
+
+type Scheduler struct {
+	httpServer *HttpServer
+	cluster    *Cluster
+	active     bool
+	activeLock sync.Mutex
+	driver     scheduler.SchedulerDriver
 }
 
-type SyslogSchedulerConfig struct {
-	// Number of CPUs allocated for each created Mesos task.
-	CpuPerTask float64
+func (s *Scheduler) Start() error {
+	Logger.Infof("Starting scheduler with configuration: \n%s", Config)
+	sched = s // set this scheduler reachable for http server
 
-	// Number of RAM allocated for each created Mesos task.
-	MemPerTask float64
+	ctrlc := make(chan os.Signal, 1)
+	signal.Notify(ctrlc, os.Interrupt)
 
-	// Artifact server host name. Will be used to fetch the executor.
-	ArtifactServerHost string
-
-	// Artifact server port.Will be used to fetch the executor.
-	ArtifactServerPort int
-
-	// Name of the executor archive file.
-	ExecutorArchiveName string
-
-	// Name of the executor binary file contained in the executor archive.
-	ExecutorBinaryName string
-
-	// Maximum retries to kill a task.
-	KillTaskRetries int
-
-	// Number of task instances to run.
-	Instances int
-
-	// Producer config file name.
-	ProducerConfig string
-
-	// Topic to produce transformed data to.
-	Topic string
-
-	// Flag to respond only after decoding-encoding is done.
-	Sync bool
-
-	LogLevel string
-
-	// Mesos master ip:port
-	Master string
-
-	// Broker list
-	BrokerList string
-}
-
-func NewSyslogScheduler(config SyslogSchedulerConfig) *SyslogScheduler {
-	scheduler := &SyslogScheduler{}
-	scheduler.config = config
-	return scheduler
-}
-
-// mesos.Scheduler interface method.
-// Invoked when the scheduler successfully registers with a Mesos master.
-func (ss *SyslogScheduler) Registered(driver scheduler.SchedulerDriver, frameworkId *mesos.FrameworkID, masterInfo *mesos.MasterInfo) {
-	log.Printf("Framework Registered with Master %s\n", masterInfo)
-}
-
-// mesos.Scheduler interface method.
-// Invoked when the scheduler re-registers with a newly elected Mesos master.
-func (ss *SyslogScheduler) Reregistered(driver scheduler.SchedulerDriver, masterInfo *mesos.MasterInfo) {
-	log.Printf("Framework Re-Registered with Master %s\n", masterInfo)
-}
-
-// mesos.Scheduler interface method.
-// Invoked when the scheduler becomes "disconnected" from the master.
-func (ss *SyslogScheduler) Disconnected(scheduler.SchedulerDriver) {
-	log.Println("Disconnected")
-}
-
-// mesos.Scheduler interface method.
-// Invoked when resources have been offered to ss framework.
-func (ss *SyslogScheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*mesos.Offer) {
-	log.Println("Received offers")
-
-	if int(ss.runningInstances) > ss.config.Instances {
-		toKill := int(ss.runningInstances) - ss.config.Instances
-		for i := 0; i < toKill; i++ {
-			driver.KillTask(ss.tasks[i])
-		}
-
-		ss.tasks = ss.tasks[toKill:]
+	if err := s.resolveDeps(); err != nil {
+		return err
 	}
 
-	offersAndTasks := make(map[*mesos.Offer][]*mesos.TaskInfo)
-	for _, offer := range offers {
-		cpus := getScalarResources(offer, "cpus")
-		mems := getScalarResources(offer, "mem")
-		ports := getRangeResources(offer, "ports")
+	listenAddr := s.listenAddr()
+	s.httpServer = NewHttpServer(listenAddr)
+	go s.httpServer.Start()
 
-		remainingCpus := cpus
-		remainingMems := mems
+	s.cluster = NewCluster()
 
-		var tasks []*mesos.TaskInfo
-		for int(ss.getRunningInstances()) < ss.config.Instances && ss.config.CpuPerTask <= remainingCpus && ss.config.MemPerTask <= remainingMems && len(ports) > 0 {
-			tcpPort := ss.takePort(&ports)
-			udpPort := ss.takePort(&ports)
-			taskPort := &mesos.Value_Range{Begin: tcpPort, End: udpPort}
-			taskId := &mesos.TaskID{
-				Value: proto.String(fmt.Sprintf("syslog-%s-%d:%d", *offer.Hostname, *tcpPort, *udpPort)),
-			}
-
-			task := &mesos.TaskInfo{
-				Name:     proto.String(taskId.GetValue()),
-				TaskId:   taskId,
-				SlaveId:  offer.SlaveId,
-				Executor: ss.createExecutor(ss.getRunningInstances(), *tcpPort, *udpPort),
-				Resources: []*mesos.Resource{
-					util.NewScalarResource("cpus", float64(ss.config.CpuPerTask)),
-					util.NewScalarResource("mem", float64(ss.config.MemPerTask)),
-					util.NewRangesResource("ports", []*mesos.Value_Range{taskPort}),
-				},
-			}
-			log.Printf("Prepared task: %s with offer %s for launch. Ports: %s\n", task.GetName(), offer.Id.GetValue(), taskPort)
-
-			tasks = append(tasks, task)
-			remainingCpus -= ss.config.CpuPerTask
-			remainingMems -= ss.config.MemPerTask
-			ports = ports[1:]
-
-			ss.tasks = append(ss.tasks, taskId)
-			ss.incRunningInstances()
-		}
-		log.Printf("Launching %d tasks for offer %s\n", len(tasks), offer.Id.GetValue())
-		offersAndTasks[offer] = tasks
+	frameworkInfo := &mesos.FrameworkInfo{
+		User:       proto.String(Config.User),
+		Name:       proto.String(Config.FrameworkName),
+		Role:       proto.String(Config.FrameworkRole),
+		Checkpoint: proto.Bool(true),
 	}
 
-	unlaunchedTasks := ss.config.Instances - int(ss.getRunningInstances())
-	if unlaunchedTasks > 0 {
-		log.Printf("There are still %d tasks to be launched and no more resources are available.", unlaunchedTasks)
+	driverConfig := scheduler.DriverConfig{
+		Scheduler: s,
+		Framework: frameworkInfo,
+		Master:    Config.Master,
+	}
+
+	driver, err := scheduler.NewMesosSchedulerDriver(driverConfig)
+	go func() {
+		<-ctrlc
+		s.Shutdown(driver)
+	}()
+
+	if err != nil {
+		return fmt.Errorf("Unable to create SchedulerDriver: %s", err)
+	}
+
+	if stat, err := driver.Run(); err != nil {
+		Logger.Infof("Framework stopped with status %s and error: %s\n", stat.String(), err)
+		return err
+	}
+
+	//TODO stop http server
+
+	return nil
+}
+
+func (s *Scheduler) SetActive(active bool) {
+	s.activeLock.Lock()
+	defer s.activeLock.Unlock()
+
+	s.active = active
+	if !s.active {
+		for _, task := range s.cluster.GetAllTasks() {
+			Logger.Debugf("Killing task %s", task.GetTaskId().GetValue())
+			s.driver.KillTask(task.GetTaskId())
+		}
+	}
+}
+
+func (s *Scheduler) Registered(driver scheduler.SchedulerDriver, id *mesos.FrameworkID, master *mesos.MasterInfo) {
+	Logger.Infof("[Registered] framework: %s master: %s:%d", id.GetValue(), master.GetHostname(), master.GetPort())
+
+	s.driver = driver
+}
+
+func (s *Scheduler) Reregistered(driver scheduler.SchedulerDriver, master *mesos.MasterInfo) {
+	Logger.Infof("[Reregistered] master: %s:%d", master.GetHostname(), master.GetPort())
+
+	s.driver = driver
+}
+
+func (s *Scheduler) Disconnected(scheduler.SchedulerDriver) {
+	Logger.Info("[Disconnected]")
+
+	s.driver = nil
+}
+
+func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*mesos.Offer) {
+	Logger.Debugf("[ResourceOffers] %s", pretty.Offers(offers))
+
+	s.activeLock.Lock()
+	defer s.activeLock.Unlock()
+
+	if !s.active {
+		Logger.Debug("Scheduler is inactive. Declining all offers.")
+		for _, offer := range offers {
+			driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+		}
+		return
 	}
 
 	for _, offer := range offers {
-		tasks := offersAndTasks[offer]
-		driver.LaunchTasks([]*mesos.OfferID{offer.Id}, tasks, &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+		declineReason := s.acceptOffer(driver, offer)
+		if declineReason != "" {
+			driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+			Logger.Debugf("Declined offer: %s", declineReason)
+		}
 	}
 }
 
-// mesos.Scheduler interface method.
-// Invoked when the status of a task has changed.
-func (ss *SyslogScheduler) StatusUpdate(driver scheduler.SchedulerDriver, status *mesos.TaskStatus) {
-	log.Printf("Status update: task %s is in state %s\n", status.TaskId.GetValue(), status.State.Enum().String())
+func (s *Scheduler) OfferRescinded(driver scheduler.SchedulerDriver, id *mesos.OfferID) {
+	Logger.Infof("[OfferRescinded] %s", id.GetValue())
+}
 
-	if status.GetState() == mesos.TaskState_TASK_LOST || status.GetState() == mesos.TaskState_TASK_FAILED || status.GetState() == mesos.TaskState_TASK_FINISHED {
-		ss.removeTask(status.GetTaskId())
-		ss.decRunningInstances()
+func (s *Scheduler) StatusUpdate(driver scheduler.SchedulerDriver, status *mesos.TaskStatus) {
+	Logger.Infof("[StatusUpdate] %s", pretty.Status(status))
+
+	slave := s.slaveFromTaskId(status.GetTaskId().GetValue())
+
+	if status.GetState() == mesos.TaskState_TASK_FAILED || status.GetState() == mesos.TaskState_TASK_KILLED ||
+		status.GetState() == mesos.TaskState_TASK_LOST || status.GetState() == mesos.TaskState_TASK_ERROR ||
+		status.GetState() == mesos.TaskState_TASK_FINISHED {
+		s.cluster.Remove(slave)
 	}
 }
 
-// mesos.Scheduler interface method.
-// Invoked when an offer is no longer valid.
-func (ss *SyslogScheduler) OfferRescinded(scheduler.SchedulerDriver, *mesos.OfferID) {}
-
-// mesos.Scheduler interface method.
-// Invoked when an executor sends a message.
-func (ss *SyslogScheduler) FrameworkMessage(scheduler.SchedulerDriver, *mesos.ExecutorID, *mesos.SlaveID, string) {
+func (s *Scheduler) FrameworkMessage(driver scheduler.SchedulerDriver, executor *mesos.ExecutorID, slave *mesos.SlaveID, message string) {
+	Logger.Infof("[FrameworkMessage] executor: %s slave: %s message: %s", executor, slave, message)
 }
 
-// mesos.Scheduler interface method.
-// Invoked when a slave has been determined unreachable
-func (ss *SyslogScheduler) SlaveLost(scheduler.SchedulerDriver, *mesos.SlaveID) {}
-
-// mesos.Scheduler interface method.
-// Invoked when an executor has exited/terminated.
-func (ss *SyslogScheduler) ExecutorLost(scheduler.SchedulerDriver, *mesos.ExecutorID, *mesos.SlaveID, int) {
+func (s *Scheduler) SlaveLost(driver scheduler.SchedulerDriver, slave *mesos.SlaveID) {
+	Logger.Infof("[SlaveLost] %s", slave.GetValue())
 }
 
-// mesos.Scheduler interface method.
-// Invoked when there is an unrecoverable error in the scheduler or scheduler driver.
-func (ss *SyslogScheduler) Error(driver scheduler.SchedulerDriver, err string) {
-	log.Printf("Scheduler received error: %s\n", err)
+func (s *Scheduler) ExecutorLost(driver scheduler.SchedulerDriver, executor *mesos.ExecutorID, slave *mesos.SlaveID, status int) {
+	Logger.Infof("[ExecutorLost] executor: %s slave: %s status: %d", executor, slave, status)
+}
+
+func (s *Scheduler) Error(driver scheduler.SchedulerDriver, message string) {
+	Logger.Errorf("[Error] %s", message)
+}
+
+func (s *Scheduler) Shutdown(driver *scheduler.MesosSchedulerDriver) {
+	Logger.Info("Shutdown triggered, stopping driver")
+	driver.Stop(false)
+}
+
+func (s *Scheduler) acceptOffer(driver scheduler.SchedulerDriver, offer *mesos.Offer) string {
+	if s.cluster.Exists(offer.GetSlaveId().GetValue()) {
+		return fmt.Sprintf("Server on slave %s is already running.", offer.GetSlaveId().GetValue())
+	} else {
+		declineReason := s.match(offer)
+		if declineReason == "" {
+			s.launchTask(driver, offer)
+		}
+		return declineReason
+	}
+}
+
+func (s *Scheduler) match(offer *mesos.Offer) string {
+	if Config.Cpus > getScalarResources(offer, "cpus") {
+		return "no cpus"
+	}
+
+	if Config.Mem > getScalarResources(offer, "mem") {
+		return "no mem"
+	}
+
+	tcpPort := s.getPort(Config.TcpPort, offer, -1)
+	if tcpPort == -1 {
+		return "no suitable port"
+	}
+
+	if s.getPort(Config.UdpPort, offer, tcpPort) == -1 {
+		return "no suitable port"
+	}
+
+	return ""
+}
+
+func (s *Scheduler) getPort(targetPort string, offer *mesos.Offer, excludePort int) int {
+	ports := getRangeResources(offer, "ports")
+	portRanges := make([]*utils.Range, len(ports))
+	for idx, rng := range ports {
+		portRanges[idx] = utils.NewRange(int(rng.GetBegin()), int(rng.GetEnd()))
+	}
+
+	if len(portRanges) == 0 {
+		return -1
+	}
+
+	if targetPort == "auto" {
+		for _, rng := range portRanges {
+			for _, rngValue := range rng.Values() {
+				if rngValue != excludePort {
+					return rngValue
+				}
+			}
+		}
+		return -1
+	} else {
+		rng, err := utils.ParseRange(targetPort)
+		if err != nil {
+			Logger.Warn(err)
+			return -1
+		}
+
+		for _, offerRng := range portRanges {
+			overlappingPorts := offerRng.Overlap(rng)
+			if overlappingPorts != nil {
+				for _, rngValue := range rng.Values() {
+					if rngValue != excludePort {
+						return rngValue
+					}
+				}
+			}
+		}
+
+		return -1
+	}
+}
+
+func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Offer) {
+	taskName := fmt.Sprintf("syslog-%s", offer.GetSlaveId().GetValue())
+	taskId := &mesos.TaskID{
+		Value: proto.String(fmt.Sprintf("%s-%s", taskName, uuid())),
+	}
+
+	data, err := json.Marshal(Config)
+	if err != nil {
+		panic(err) //shouldn't happen
+	}
+	Logger.Debugf("Task data: %s", string(data))
+
+	tcpPort := uint64(s.getPort(Config.TcpPort, offer, -1))
+	udpPort := uint64(s.getPort(Config.UdpPort, offer, int(tcpPort)))
+
+	task := &mesos.TaskInfo{
+		Name:     proto.String(taskName),
+		TaskId:   taskId,
+		SlaveId:  offer.GetSlaveId(),
+		Executor: s.createExecutor(offer, tcpPort, udpPort),
+		Resources: []*mesos.Resource{
+			util.NewScalarResource("cpus", Config.Cpus),
+			util.NewScalarResource("mem", Config.Mem),
+			util.NewRangesResource("ports", []*mesos.Value_Range{util.NewValueRange(tcpPort, tcpPort)}),
+			util.NewRangesResource("ports", []*mesos.Value_Range{util.NewValueRange(udpPort, udpPort)}),
+		},
+		Data: data,
+	}
+
+	s.cluster.Add(offer.GetSlaveId().GetValue(), task)
+
+	driver.LaunchTasks([]*mesos.OfferID{offer.GetId()}, []*mesos.TaskInfo{task}, &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+}
+
+func (s *Scheduler) createExecutor(offer *mesos.Offer, tcpPort uint64, udpPort uint64) *mesos.ExecutorInfo {
+	name := fmt.Sprintf("syslog-%s", offer.GetSlaveId().GetValue())
+	id := fmt.Sprintf("%s-%s", name, uuid())
+
+	uris := []*mesos.CommandInfo_URI{
+		&mesos.CommandInfo_URI{
+			Value:      proto.String(fmt.Sprintf("%s/resource/%s", Config.Api, Config.Executor)),
+			Executable: proto.Bool(true),
+		},
+	}
+
+	if Config.ProducerProperties != "" {
+		uris = append(uris, &mesos.CommandInfo_URI{
+			Value: proto.String(fmt.Sprintf("%s/resource/%s", Config.Api, Config.ProducerProperties)),
+		})
+	}
+
+	return &mesos.ExecutorInfo{
+		ExecutorId: util.NewExecutorID(id),
+		Name:       proto.String(name),
+		Command: &mesos.CommandInfo{
+			Value: proto.String(fmt.Sprintf("./%s --log.level %s --tcp %d --udp %d", Config.Executor, Config.LogLevel, tcpPort, udpPort)),
+			Uris:  uris,
+		},
+	}
+}
+
+func (s *Scheduler) slaveFromTaskId(taskId string) string {
+	tokens := strings.SplitN(taskId, "-", 2)
+	slave := tokens[len(tokens)-1]
+	slave = slave[:len(slave)-37] //strip uuid part
+	Logger.Debugf("Slave ID extracted from %s is %s", taskId, slave)
+	return slave
+}
+
+func (s *Scheduler) resolveDeps() error {
+	files, _ := ioutil.ReadDir("./")
+	for _, file := range files {
+		if !file.IsDir() && executorMask.MatchString(file.Name()) {
+			Config.Executor = file.Name()
+		}
+	}
+
+	if Config.Executor == "" {
+		return fmt.Errorf("%s not found in current dir", executorMask)
+	}
+
+	return nil
+}
+
+func (s *Scheduler) listenAddr() string {
+	address := Config.Api
+	if strings.HasPrefix(address, "http://") {
+		address = address[len("http://"):]
+	}
+
+	colonIndex := strings.LastIndex(address, ":")
+	if colonIndex != -1 {
+		address = "0.0.0.0" + address[colonIndex:]
+	}
+
+	return address
 }
 
 func getScalarResources(offer *mesos.Offer, resourceName string) float64 {
@@ -227,101 +379,8 @@ func getRangeResources(offer *mesos.Offer, resourceName string) []*mesos.Value_R
 	return resources
 }
 
-func (ss *SyslogScheduler) getRunningInstances() int32 {
-	return atomic.LoadInt32(&ss.runningInstances)
-}
-
-func (ss *SyslogScheduler) incRunningInstances() {
-	atomic.AddInt32(&ss.runningInstances, 1)
-}
-
-func (ss *SyslogScheduler) decRunningInstances() {
-	atomic.AddInt32(&ss.runningInstances, -1)
-}
-
-func param(key string, value string) string {
-	return fmt.Sprintf("--%s %s", key, value)
-}
-
-func (ss *SyslogScheduler) createExecutor(instanceId int32, tcpPort uint64, udpPort uint64) *mesos.ExecutorInfo {
-	log.Println("Creating executor")
-	path := strings.Split(ss.config.ExecutorArchiveName, "/")
-	var brokers string
-
-	if ss.config.BrokerList != "" {
-		brokers = ss.config.BrokerList
-	} else {
-		brokers = strings.Join(getBrokers(ss.config.Master), ",")
-	}
-
-	params := []string{param("log.level", ss.config.LogLevel),
-		param("producer.config", ss.config.ProducerConfig),
-		param("num.producers", "1"),
-		param("topic", ss.config.Topic),
-		param("tcp.port", strconv.FormatUint(tcpPort, 10)),
-		param("udp.port", strconv.FormatUint(udpPort, 10)),
-		param("broker.list", brokers),
-	}
-
-	paramString := strings.Join(params, " ")
-
-	return &mesos.ExecutorInfo{
-		ExecutorId: util.NewExecutorID(fmt.Sprintf("syslog-%d", instanceId)),
-		Name:       proto.String("Syslog Executor"),
-		Source:     proto.String("cisco"),
-		Command: &mesos.CommandInfo{
-			Value: proto.String(fmt.Sprintf("./%s %s", ss.config.ExecutorBinaryName, paramString)),
-			Uris: []*mesos.CommandInfo_URI{&mesos.CommandInfo_URI{
-				Value:   proto.String(fmt.Sprintf("http://%s:%d/resource/%s", ss.config.ArtifactServerHost, ss.config.ArtifactServerPort, path[len(path)-1])),
-				Extract: proto.Bool(true),
-			}, &mesos.CommandInfo_URI{
-				Value: proto.String(fmt.Sprintf("http://%s:%d/resource/%s", ss.config.ArtifactServerHost, ss.config.ArtifactServerPort, ss.config.ProducerConfig)),
-			}},
-		},
-	}
-}
-
-func (ss *SyslogScheduler) takePort(ports *[]*mesos.Value_Range) *uint64 {
-	port := (*ports)[0].Begin
-	portRange := (*ports)[0]
-	portRange.Begin = proto.Uint64((*portRange.Begin) + 1)
-
-	if *portRange.Begin > *portRange.End {
-		*ports = (*ports)[1:]
-	} else {
-		(*ports)[0] = portRange
-	}
-
-	return port
-}
-
-func (ss *SyslogScheduler) removeTask(id *mesos.TaskID) {
-	for i, task := range ss.tasks {
-		if *task.Value == *id.Value {
-			ss.tasks = append(ss.tasks[:i], ss.tasks[i+1:]...)
-		}
-	}
-}
-
-// Gracefully shuts down all running tasks.
-func (ss *SyslogScheduler) Shutdown(driver scheduler.SchedulerDriver) {
-	fmt.Println("Shutting down scheduler.")
-
-	for _, taskId := range ss.tasks {
-		if err := ss.tryKillTask(driver, taskId); err != nil {
-			fmt.Printf("Failed to kill task %s\n", taskId.GetValue())
-		}
-	}
-}
-
-func (ss *SyslogScheduler) tryKillTask(driver scheduler.SchedulerDriver, taskId *mesos.TaskID) error {
-	fmt.Printf("Trying to kill task %s\n", taskId.GetValue())
-
-	var err error
-	for i := 0; i <= ss.config.KillTaskRetries; i++ {
-		if _, err = driver.KillTask(taskId); err == nil {
-			return nil
-		}
-	}
-	return err
+func uuid() string {
+	b := make([]byte, 16)
+	crand.Read(b)
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
