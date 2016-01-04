@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Syslog Framework for Mesos by elodina</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-dark.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+    <script src="javascripts/respond.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <!--[if lt IE 8]>
+    <link rel="stylesheet" href="stylesheets/ie.css">
+    <![endif]-->
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+
+  </head>
+  <body>
+      <div id="header">
+        <nav>
+          <li class="fork"><a href="https://github.com/elodina/syslog-service">View On GitHub</a></li>
+          <li class="downloads"><a href="https://github.com/elodina/syslog-service/zipball/master">ZIP</a></li>
+          <li class="downloads"><a href="https://github.com/elodina/syslog-service/tarball/master">TAR</a></li>
+          <li class="title">DOWNLOADS</li>
+        </nav>
+      </div><!-- end header -->
+
+    <div class="wrapper">
+
+      <section>
+        <div id="title">
+          <h1>Syslog Framework for Mesos</h1>
+          <p>Go based Syslog service that can run within an infrastructure role on Mesos.</p>
+          <hr>
+          <span class="credits left">Project maintained by <a href="https://github.com/elodina">elodina</a></span>
+          <span class="credits right">Hosted on GitHub Pages &mdash; Theme by <a href="https://twitter.com/michigangraham">mattgraham</a></span>
+        </div>
+
+        <h1>
+<a id="syslog-service" class="anchor" href="#syslog-service" aria-hidden="true"><span class="octicon octicon-link"></span></a>Syslog-Service</h1>
+
+<p>Go based Syslog service that can run within an infrastructure role on Mesos.</p>
+
+<h1>
+<a id="pre-requisites" class="anchor" href="#pre-requisites" aria-hidden="true"><span class="octicon octicon-link"></span></a>Pre-Requisites</h1>
+
+<ul>
+<li><a href="http://golang.org/doc/install">Golang</a></li>
+<li>A standard and working Go workspace setup</li>
+<li>Apache Mesos 0.19 or newer</li>
+</ul>
+
+<h1>
+<a id="build-instructions" class="anchor" href="#build-instructions" aria-hidden="true"><span class="octicon octicon-link"></span></a>Build Instructions</h1>
+
+<ul>
+<li>Get the project</li>
+</ul>
+
+<pre><code>$ cd $GOPATH/src/
+$ mkdir -p github.com/stealthly
+$ cd github.com/stealthly
+$ git clone https://github.com/stealthly/syslog-service.git
+$ cd syslog-service
+</code></pre>
+
+<ul>
+<li>Build the scheduler and the executor</li>
+</ul>
+
+<pre><code>$ go build cli.go
+$ go build executor.go
+</code></pre>
+
+<h2>
+<a id="usage" class="anchor" href="#usage" aria-hidden="true"><span class="octicon octicon-link"></span></a>Usage</h2>
+
+<p>Syslog framework ships with command-line utility to manage schedulers and executors:</p>
+
+<pre><code># ./cli help
+Usage:
+    help: show this message
+    scheduler: configure and start scheduler
+    start: start syslog servers
+    stop: stop syslog servers
+    update: update configuration
+    status: get current status of cluster
+More help you can get from ./cli &lt;command&gt; -h
+</code></pre>
+
+<h2>
+<a id="scheduler-configuration" class="anchor" href="#scheduler-configuration" aria-hidden="true"><span class="octicon octicon-link"></span></a>Scheduler Configuration</h2>
+
+<p>The scheduler is configured through the command line.</p>
+
+<pre><code># ./cli scheduler &lt;options&gt;
+</code></pre>
+
+<p>Following options are available:</p>
+
+<pre><code>-master="": Mesos Master addresses.
+-api="": Binding host:port for http/artifact server. Optional if SM_API env is set.
+-user="": Mesos user. Defaults to current system user.
+-log.level="info": Log level. trace|debug|info|warn|error|critical. Defaults to info.
+-framework.name="syslog-kafka": Framework name.
+-framework.role="*": Framework role.
+</code></pre>
+
+<h2>
+<a id="starting-and-stopping-framework" class="anchor" href="#starting-and-stopping-framework" aria-hidden="true"><span class="octicon octicon-link"></span></a>Starting and Stopping Framework</h2>
+
+<pre><code># ./cli start|stop &lt;options&gt;
+</code></pre>
+
+<p>Options available:</p>
+
+<pre><code>-api="": Binding host:port for http/artifact server. Optional if SM_API env is set.
+</code></pre>
+
+<h2>
+<a id="updating-server-preferences" class="anchor" href="#updating-server-preferences" aria-hidden="true"><span class="octicon octicon-link"></span></a>Updating Server Preferences</h2>
+
+<pre><code># ./cli update &lt;options&gt;
+</code></pre>
+
+<p>Following options are available:</p>
+
+<pre><code>-api: Binding host:port for http/artifact server. Optional if SM_API env is set.
+-producer.properties: Producer.properties file name.
+--broker.list: Kafka broker list separated by comma.
+-topic: Topic to produce data to.
+-tcp.port: TCP port range to accept.
+-udp.port: UDP port range to accept.
+-num.producers: Number of producers to launch.
+-channel.size: Producer buffer size.
+</code></pre>
+
+<h2>
+<a id="quick-start" class="anchor" href="#quick-start" aria-hidden="true"><span class="octicon octicon-link"></span></a>Quick start:</h2>
+
+<pre><code># export SM_API=http://master:6666
+# ./cli scheduler --master master:5050
+# ./cli update --broker.list 192.168.3.1:9092 --topic syslog
+# ./cli start
+</code></pre>
+      </section>
+
+    </div>
+    <!--[if !IE]><script>fixScale(document);</script><![endif]-->
+    
+  </body>
+</html>
