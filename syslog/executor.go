@@ -21,14 +21,14 @@ import (
 	"fmt"
 	"github.com/mesos/mesos-go/executor"
 	mesos "github.com/mesos/mesos-go/mesosproto"
-	kafka "github.com/stealthly/go_kafka_client"
+	"github.com/stealthly/siesta"
 	"time"
 )
 
 type Executor struct {
 	tcpPort  int
 	udpPort  int
-	producer *kafka.SyslogProducer
+	producer *SyslogProducer
 	close    chan struct{}
 }
 
@@ -107,32 +107,25 @@ func (e *Executor) Error(driver executor.ExecutorDriver, message string) {
 	Logger.Errorf("[Error] %s", message)
 }
 
-func (e *Executor) newSyslogProducer() *kafka.SyslogProducer {
-	config := kafka.NewSyslogProducerConfig()
-	conf, err := kafka.ProducerConfigFromFile(Config.ProducerProperties)
+func (e *Executor) newSyslogProducer() *SyslogProducer {
+	config := NewSyslogProducerConfig()
+	conf, err := siesta.ProducerConfigFromFile(Config.ProducerProperties)
 	useFile := true
 	if err != nil {
 		//we dont have a producer configuraiton which is ok
 		useFile = false
-	} else {
-		if err = conf.Validate(); err != nil {
-			panic(err)
-		}
 	}
 
 	if useFile {
 		config.ProducerConfig = conf
 	} else {
-		config.ProducerConfig = kafka.DefaultProducerConfig()
-		config.ProducerConfig.Acks = 1
-		config.ProducerConfig.Timeout = time.Second
+		config.ProducerConfig = siesta.NewProducerConfig()
 	}
-	config.NumProducers = 1    //TODO configurable
-	config.ChannelSize = 10000 //TODO configurable
+	config.NumProducers = 1 //TODO configurable
 	config.BrokerList = Config.BrokerList
 	config.TCPAddr = fmt.Sprintf("0.0.0.0:%d", e.tcpPort)
 	config.UDPAddr = fmt.Sprintf("0.0.0.0:%d", e.udpPort)
 	config.Topic = Config.Topic
 
-	return kafka.NewSyslogProducer(config)
+	return NewSyslogProducer(config)
 }
