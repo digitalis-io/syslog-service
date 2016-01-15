@@ -29,6 +29,7 @@ import (
 var logLevel = flag.String("log.level", "info", "Log level. trace|debug|info|warn|error|critical. Defaults to info.")
 var tcpPort = flag.Int("tcp", 0, "TCP port to listen to.")
 var udpPort = flag.Int("udp", 0, "UDP port to listen to.")
+var hostname = flag.String("host", "", "Hostname this executor runs at.")
 
 func main() {
 	flag.Parse()
@@ -39,7 +40,7 @@ func main() {
 	}
 
 	driverConfig := executor.DriverConfig{
-		Executor: syslog.NewExecutor(*tcpPort, *udpPort),
+		Executor: syslog.NewExecutor(*tcpPort, *udpPort, *hostname),
 	}
 
 	driver, err := executor.NewMesosExecutorDriver(driverConfig)

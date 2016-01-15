@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/mesos/mesos-go/executor"
 	mesos "github.com/mesos/mesos-go/mesosproto"
+	"github.com/stealthly/go_kafka_client"
 	"github.com/stealthly/siesta"
 	"time"
 )
@@ -28,15 +29,17 @@ import (
 type Executor struct {
 	tcpPort  int
 	udpPort  int
+	hostname string
 	producer *SyslogProducer
 	close    chan struct{}
 }
 
-func NewExecutor(tcpPort int, udpPort int) *Executor {
+func NewExecutor(tcpPort int, udpPort int, hostname string) *Executor {
 	return &Executor{
-		tcpPort: tcpPort,
-		udpPort: udpPort,
-		close:   make(chan struct{}, 1),
+		tcpPort:  tcpPort,
+		udpPort:  udpPort,
+		hostname: hostname,
+		close:    make(chan struct{}, 1),
 	}
 }
 
@@ -126,6 +129,12 @@ func (e *Executor) newSyslogProducer() *SyslogProducer {
 	config.TCPAddr = fmt.Sprintf("0.0.0.0:%d", e.tcpPort)
 	config.UDPAddr = fmt.Sprintf("0.0.0.0:%d", e.udpPort)
 	config.Topic = Config.Topic
+	config.Hostname = e.hostname
+	config.Namespace = Config.Namespace
+	if Config.Transform == TransformAvro {
+		config.Transformer = avroTransformFunc
+		config.ValueSerializer = go_kafka_client.NewKafkaAvroEncoder(Config.SchemaRegistryUrl).Encode
+	}
 
 	return NewSyslogProducer(config)
 }

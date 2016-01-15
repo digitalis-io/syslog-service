@@ -75,6 +75,8 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	setConfig(queryParams, "broker.list", &Config.BrokerList)
 	setConfig(queryParams, "tcp.port", &Config.TcpPort)
 	setConfig(queryParams, "udp.port", &Config.UdpPort)
+	setConfig(queryParams, "transform", &Config.Transform)
+	setConfig(queryParams, "schema.registry.url", &Config.SchemaRegistryUrl)
 	setIntConfig(queryParams, "num.producers", &Config.NumProducers)
 	setIntConfig(queryParams, "channel.size", &Config.ChannelSize)
 

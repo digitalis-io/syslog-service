@@ -95,6 +95,7 @@ func handleScheduler() error {
 	flag.StringVar(&logLevel, "log.level", syslog.Config.LogLevel, "Log level. trace|debug|info|warn|error|critical. Defaults to info.")
 	flag.StringVar(&syslog.Config.FrameworkName, "framework.name", syslog.Config.FrameworkName, "Framework name.")
 	flag.StringVar(&syslog.Config.FrameworkRole, "framework.role", syslog.Config.FrameworkRole, "Framework role.")
+	flag.StringVar(&syslog.Config.Namespace, "namespace", syslog.Config.Namespace, "Namespace.")
 
 	flag.Parse()
 
@@ -144,6 +145,8 @@ func handleUpdate() error {
 	flag.StringVar(&syslog.Config.Topic, "topic", "", "Topic to produce data to.")
 	flag.StringVar(&syslog.Config.TcpPort, "tcp.port", "", "TCP port range to accept.")
 	flag.StringVar(&syslog.Config.UdpPort, "udp.port", "", "UDP port range to accept.")
+	flag.StringVar(&syslog.Config.Transform, "transform", "", "Transofmation to apply to each message. none|avro")
+	flag.StringVar(&syslog.Config.SchemaRegistryUrl, "schema.registry.url", "", "Avro Schema Registry url for transform=avro")
 	flag.IntVar(&syslog.Config.NumProducers, "num.producers", math.MinInt64, "Number of producers to launch.")
 	flag.IntVar(&syslog.Config.ChannelSize, "channel.size", math.MinInt64, "Producer buffer size.")
 
@@ -159,6 +162,8 @@ func handleUpdate() error {
 	request.PutString("topic", syslog.Config.Topic)
 	request.PutString("tcp.port", syslog.Config.TcpPort)
 	request.PutString("udp.port", syslog.Config.UdpPort)
+	request.PutString("transform", syslog.Config.Transform)
+	request.PutString("schema.registry.url", syslog.Config.SchemaRegistryUrl)
 	request.PutInt("num.producers", int64(syslog.Config.NumProducers))
 	request.PutInt("channel.size", int64(syslog.Config.ChannelSize))
 	response := request.Get()
