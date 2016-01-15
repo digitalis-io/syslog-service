@@ -314,7 +314,7 @@ func (s *Scheduler) createExecutor(offer *mesos.Offer, tcpPort uint64, udpPort u
 		ExecutorId: util.NewExecutorID(id),
 		Name:       proto.String(name),
 		Command: &mesos.CommandInfo{
-			Value: proto.String(fmt.Sprintf("./%s --log.level %s --tcp %d --udp %d", Config.Executor, Config.LogLevel, tcpPort, udpPort)),
+			Value: proto.String(fmt.Sprintf("./%s --log.level %s --tcp %d --udp %d --host %s", Config.Executor, Config.LogLevel, tcpPort, udpPort, offer.GetHostname())),
 			Uris:  uris,
 		},
 	}

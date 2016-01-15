@@ -26,6 +26,11 @@ import (
 
 var Logger log.LoggerInterface
 
+const (
+	TransformNone = "none"
+	TransformAvro = "avro"
+)
+
 var Config *config = &config{
 	FrameworkName: "syslog-kafka",
 	FrameworkRole: "*",
@@ -35,6 +40,7 @@ var Config *config = &config{
 	ChannelSize:   10000,
 	TcpPort:       "auto",
 	UdpPort:       "auto",
+	Transform:     "none",
 	LogLevel:      "info",
 }
 
@@ -56,10 +62,16 @@ type config struct {
 	NumProducers       int
 	ChannelSize        int
 	Topic              string
+	Transform          string
+	SchemaRegistryUrl  string
+	Namespace          string
 	LogLevel           string
 }
 
 func (c *config) CanStart() bool {
+	if c.Transform == TransformAvro && c.SchemaRegistryUrl == "" {
+		return false
+	}
 	return c.Topic != "" && c.BrokerList != ""
 }
 
@@ -90,9 +102,13 @@ number of producers: %d
 producer buffer:     %d
 broker list:         %s
 topic:               %s
+transform:           %s
+schema registry url: %s
+namespace:           %s
 log level:           %s
 `, c.Api, c.Master, c.FrameworkName, c.FrameworkRole, c.User, c.Cpus, c.Mem, c.TcpPort, c.UdpPort,
-		c.Executor, c.ProducerProperties, c.NumProducers, c.ChannelSize, c.BrokerList, c.Topic, c.LogLevel)
+		c.Executor, c.ProducerProperties, c.NumProducers, c.ChannelSize, c.BrokerList, c.Topic, c.Transform,
+		c.SchemaRegistryUrl, c.Namespace, c.LogLevel)
 }
 
 func InitLogging(level string) error {

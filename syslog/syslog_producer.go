@@ -18,6 +18,7 @@ package syslog
 import (
 	"bufio"
 	"github.com/stealthly/siesta"
+	"github.com/stealthly/syslog-service/syslog/avro"
 	"net"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 
 type SyslogMessage struct {
 	Message   string
+	Hostname  string
 	Timestamp int64
 }
 
@@ -47,14 +49,22 @@ type SyslogProducerConfig struct {
 	// Kafka Broker List host:port,host:port
 	BrokerList string
 
+	// Hostname the message came from
+	Hostname string
+
+	Namespace string
+
 	// Transformer func(message syslogparser.LogParts, topic string) *sarama.ProducerMessage
 	Transformer func(message *SyslogMessage, topic string) *siesta.ProducerRecord
+
+	ValueSerializer siesta.Serializer
 }
 
 // Creates an empty SyslogProducerConfig.
 func NewSyslogProducerConfig() *SyslogProducerConfig {
 	return &SyslogProducerConfig{
-		Transformer: simpleTransformFunc,
+		Transformer:     simpleTransformFunc,
+		ValueSerializer: siesta.StringSerializer,
 	}
 }
 
@@ -161,14 +171,13 @@ func (this *SyslogProducer) scan(connection net.Conn) {
 	scanner := bufio.NewScanner(connection)
 	for scanner.Scan() {
 		timestamp := time.Now().UnixNano() / int64(time.Millisecond)
-		this.incoming <- &SyslogMessage{scanner.Text(), timestamp}
+		this.incoming <- &SyslogMessage{scanner.Text(), this.config.Hostname, timestamp}
 	}
 }
 
 func (this *SyslogProducer) startProducers() {
 	brokerList := strings.Split(this.config.BrokerList, ",")
 	config := siesta.NewProducerConfig()
-	config.MaxRequests
 
 	connectorConfig := siesta.NewConnectorConfig()
 	connectorConfig.BrokerList = brokerList
@@ -179,7 +188,7 @@ func (this *SyslogProducer) startProducers() {
 
 	for i := 0; i < this.config.NumProducers; i++ {
 		Logger.Debugf("Starting new producer with config: %#v", config)
-		producer := siesta.NewKafkaProducer(config, siesta.ByteSerializer, siesta.StringSerializer, connector)
+		producer := siesta.NewKafkaProducer(config, siesta.ByteSerializer, this.config.ValueSerializer, connector)
 		this.producers = append(this.producers, producer)
 		go this.produceRoutine(producer)
 	}
@@ -193,4 +202,19 @@ func (this *SyslogProducer) produceRoutine(producer *siesta.KafkaProducer) {
 
 func simpleTransformFunc(msg *SyslogMessage, topic string) *siesta.ProducerRecord {
 	return &siesta.ProducerRecord{Topic: topic, Value: msg.Message}
+}
+
+func avroTransformFunc(msg *SyslogMessage, topic string) *siesta.ProducerRecord {
+	logLine := avro.NewLogLine()
+	logLine.Line = msg.Message
+	logLine.Source = msg.Hostname
+	logLine.Tag = make(map[string]string)
+	logLine.Tag["namespace"] = Config.Namespace
+	logLine.Timings = make([]*avro.Timing, 0)
+	logLine.Timings = append(logLine.Timings, &avro.Timing{
+		EventName: "received",
+		Value:     msg.Timestamp,
+	})
+
+	return &siesta.ProducerRecord{Topic: topic, Value: logLine}
 }
