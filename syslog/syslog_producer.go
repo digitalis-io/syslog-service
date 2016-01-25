@@ -17,8 +17,8 @@ package syslog
 
 import (
 	"bufio"
-	"github.com/stealthly/siesta"
-	"github.com/stealthly/syslog-service/syslog/avro"
+	"github.com/elodina/siesta"
+	"github.com/elodina/syslog-service/syslog/avro"
 	"net"
 	"strings"
 	"time"

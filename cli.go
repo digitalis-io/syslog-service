@@ -19,7 +19,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/stealthly/syslog-service/syslog"
+	"github.com/elodina/syslog-service/syslog"
 	"math"
 	"os"
 )
