@@ -19,10 +19,10 @@ import (
 	"os"
 
 	"fmt"
+	"github.com/elodina/go-kafka-avro"
+	"github.com/elodina/siesta"
 	"github.com/mesos/mesos-go/executor"
 	mesos "github.com/mesos/mesos-go/mesosproto"
-	"github.com/stealthly/go_kafka_client"
-	"github.com/stealthly/siesta"
 	"time"
 )
 
@@ -133,7 +133,7 @@ func (e *Executor) newSyslogProducer() *SyslogProducer {
 	config.Namespace = Config.Namespace
 	if Config.Transform == TransformAvro {
 		config.Transformer = avroTransformFunc
-		config.ValueSerializer = go_kafka_client.NewKafkaAvroEncoder(Config.SchemaRegistryUrl).Encode
+		config.ValueSerializer = avro.NewKafkaAvroEncoder(Config.SchemaRegistryUrl).Encode
 	}
 
 	return NewSyslogProducer(config)

@@ -15,9 +15,9 @@ Build Instructions
 - Get the project
 ```
 $ cd $GOPATH/src/
-$ mkdir -p github.com/stealthly
-$ cd github.com/stealthly
-$ git clone https://github.com/stealthly/syslog-service.git
+$ mkdir -p github.com/elodina
+$ cd github.com/elodina
+$ git clone https://github.com/elodina/syslog-service.git
 $ cd syslog-service
 ```
 
