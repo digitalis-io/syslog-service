@@ -31,6 +31,10 @@ const (
 	TransformAvro = "avro"
 )
 
+func init() {
+	InitLogging("info")
+}
+
 var Config *config = &config{
 	FrameworkName: "syslog-kafka",
 	FrameworkRole: "*",
