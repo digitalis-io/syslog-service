@@ -41,6 +41,7 @@ type Scheduler struct {
 	active     bool
 	activeLock sync.Mutex
 	driver     scheduler.SchedulerDriver
+	labels     string
 }
 
 func (s *Scheduler) Start() error {
@@ -60,11 +61,14 @@ func (s *Scheduler) Start() error {
 
 	s.cluster = NewCluster()
 
+	s.labels = os.Getenv("STACK_LABELS")
+
 	frameworkInfo := &mesos.FrameworkInfo{
 		User:       proto.String(Config.User),
 		Name:       proto.String(Config.FrameworkName),
 		Role:       proto.String(Config.FrameworkRole),
 		Checkpoint: proto.Bool(true),
+		Labels:     utils.StringToLabels(s.labels),
 	}
 
 	driverConfig := scheduler.DriverConfig{
@@ -285,7 +289,8 @@ func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Of
 			util.NewRangesResource("ports", []*mesos.Value_Range{util.NewValueRange(tcpPort, tcpPort)}),
 			util.NewRangesResource("ports", []*mesos.Value_Range{util.NewValueRange(udpPort, udpPort)}),
 		},
-		Data: data,
+		Data:   data,
+		Labels: utils.StringToLabels(s.labels),
 	}
 
 	s.cluster.Add(offer.GetSlaveId().GetValue(), task)
@@ -310,11 +315,13 @@ func (s *Scheduler) createExecutor(offer *mesos.Offer, tcpPort uint64, udpPort u
 		})
 	}
 
+	command := fmt.Sprintf("./%s --log.level %s --tcp %d --udp %d --host %s", Config.Executor, Config.LogLevel, tcpPort, udpPort, offer.GetHostname())
+
 	return &mesos.ExecutorInfo{
 		ExecutorId: util.NewExecutorID(id),
 		Name:       proto.String(name),
 		Command: &mesos.CommandInfo{
-			Value: proto.String(fmt.Sprintf("./%s --log.level %s --tcp %d --udp %d --host %s", Config.Executor, Config.LogLevel, tcpPort, udpPort, offer.GetHostname())),
+			Value: proto.String(command),
 			Uris:  uris,
 		},
 	}
