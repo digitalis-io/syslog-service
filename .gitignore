@@ -28,3 +28,4 @@ syslog/syslog
 .idea
 executor
 framework
+syslog-service
