@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	mesos "github.com/mesos/mesos-go/mesosproto"
+	"github.com/yanzay/log"
 	"strconv"
 )
 
@@ -80,7 +81,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	setIntConfig(queryParams, "num.producers", &Config.NumProducers)
 	setIntConfig(queryParams, "channel.size", &Config.ChannelSize)
 
-	Logger.Infof("Scheduler configuration updated: \n%s", Config)
+	log.Infof("Scheduler configuration updated: \n%s", Config)
 	respond(true, "Configuration updated", w)
 }
 

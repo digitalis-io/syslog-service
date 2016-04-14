@@ -18,22 +18,15 @@ package syslog
 import (
 	"encoding/json"
 	"fmt"
-	log "github.com/cihub/seelog"
 	mesos "github.com/mesos/mesos-go/mesosproto"
-	"os"
+	"github.com/yanzay/log"
 	"regexp"
 )
-
-var Logger log.LoggerInterface
 
 const (
 	TransformNone = "none"
 	TransformAvro = "avro"
 )
-
-func init() {
-	InitLogging("info")
-}
 
 var Config *config = &config{
 	FrameworkName: "syslog-kafka",
@@ -45,7 +38,6 @@ var Config *config = &config{
 	TcpPort:       "auto",
 	UdpPort:       "auto",
 	Transform:     "none",
-	LogLevel:      "info",
 }
 
 var executorMask = regexp.MustCompile("executor.*")
@@ -69,7 +61,6 @@ type config struct {
 	Transform          string
 	SchemaRegistryUrl  string
 	Namespace          string
-	LogLevel           string
 }
 
 func (c *config) CanStart() bool {
@@ -81,11 +72,10 @@ func (c *config) CanStart() bool {
 
 func (c *config) Read(task *mesos.TaskInfo) {
 	config := new(config)
-	Logger.Debugf("Task data: %s", string(task.GetData()))
+	log.Debugf("Task data: %s", string(task.GetData()))
 	err := json.Unmarshal(task.GetData(), config)
 	if err != nil {
-		Logger.Critical(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	*c = *config
 }
@@ -109,26 +99,7 @@ topic:               %s
 transform:           %s
 schema registry url: %s
 namespace:           %s
-log level:           %s
 `, c.Api, c.Master, c.FrameworkName, c.FrameworkRole, c.User, c.Cpus, c.Mem, c.TcpPort, c.UdpPort,
 		c.Executor, c.ProducerProperties, c.NumProducers, c.ChannelSize, c.BrokerList, c.Topic, c.Transform,
-		c.SchemaRegistryUrl, c.Namespace, c.LogLevel)
-}
-
-func InitLogging(level string) error {
-	config := fmt.Sprintf(`<seelog minlevel="%s">
-    <outputs formatid="main">
-        <console />
-    </outputs>
-
-    <formats>
-        <format id="main" format="%%Date/%%Time [%%LEVEL] %%Msg%%n"/>
-    </formats>
-</seelog>`, level)
-
-	logger, err := log.LoggerFromConfigAsBytes([]byte(config))
-	Config.LogLevel = level
-	Logger = logger
-
-	return err
+		c.SchemaRegistryUrl, c.Namespace)
 }

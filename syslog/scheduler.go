@@ -31,6 +31,7 @@ import (
 	mesos "github.com/mesos/mesos-go/mesosproto"
 	util "github.com/mesos/mesos-go/mesosutil"
 	"github.com/mesos/mesos-go/scheduler"
+	"github.com/yanzay/log"
 )
 
 var sched *Scheduler // This is needed for HTTP server to be able to update this scheduler
@@ -45,7 +46,7 @@ type Scheduler struct {
 }
 
 func (s *Scheduler) Start() error {
-	Logger.Infof("Starting scheduler with configuration: \n%s", Config)
+	log.Infof("Starting scheduler with configuration: \n%s", Config)
 	sched = s // set this scheduler reachable for http server
 
 	ctrlc := make(chan os.Signal, 1)
@@ -88,7 +89,7 @@ func (s *Scheduler) Start() error {
 	}
 
 	if stat, err := driver.Run(); err != nil {
-		Logger.Infof("Framework stopped with status %s and error: %s\n", stat.String(), err)
+		log.Infof("Framework stopped with status %s and error: %s\n", stat.String(), err)
 		return err
 	}
 
@@ -104,38 +105,38 @@ func (s *Scheduler) SetActive(active bool) {
 	s.active = active
 	if !s.active {
 		for _, task := range s.cluster.GetAllTasks() {
-			Logger.Debugf("Killing task %s", task.GetTaskId().GetValue())
+			log.Debugf("Killing task %s", task.GetTaskId().GetValue())
 			s.driver.KillTask(task.GetTaskId())
 		}
 	}
 }
 
 func (s *Scheduler) Registered(driver scheduler.SchedulerDriver, id *mesos.FrameworkID, master *mesos.MasterInfo) {
-	Logger.Infof("[Registered] framework: %s master: %s:%d", id.GetValue(), master.GetHostname(), master.GetPort())
+	log.Infof("[Registered] framework: %s master: %s:%d", id.GetValue(), master.GetHostname(), master.GetPort())
 
 	s.driver = driver
 }
 
 func (s *Scheduler) Reregistered(driver scheduler.SchedulerDriver, master *mesos.MasterInfo) {
-	Logger.Infof("[Reregistered] master: %s:%d", master.GetHostname(), master.GetPort())
+	log.Infof("[Reregistered] master: %s:%d", master.GetHostname(), master.GetPort())
 
 	s.driver = driver
 }
 
 func (s *Scheduler) Disconnected(scheduler.SchedulerDriver) {
-	Logger.Info("[Disconnected]")
+	log.Info("[Disconnected]")
 
 	s.driver = nil
 }
 
 func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*mesos.Offer) {
-	Logger.Debugf("[ResourceOffers] %s", pretty.Offers(offers))
+	log.Debugf("[ResourceOffers] %s", pretty.Offers(offers))
 
 	s.activeLock.Lock()
 	defer s.activeLock.Unlock()
 
 	if !s.active {
-		Logger.Debug("Scheduler is inactive. Declining all offers.")
+		log.Debug("Scheduler is inactive. Declining all offers.")
 		for _, offer := range offers {
 			driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
 		}
@@ -146,17 +147,17 @@ func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*m
 		declineReason := s.acceptOffer(driver, offer)
 		if declineReason != "" {
 			driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
-			Logger.Debugf("Declined offer: %s", declineReason)
+			log.Debugf("Declined offer: %s", declineReason)
 		}
 	}
 }
 
 func (s *Scheduler) OfferRescinded(driver scheduler.SchedulerDriver, id *mesos.OfferID) {
-	Logger.Infof("[OfferRescinded] %s", id.GetValue())
+	log.Infof("[OfferRescinded] %s", id.GetValue())
 }
 
 func (s *Scheduler) StatusUpdate(driver scheduler.SchedulerDriver, status *mesos.TaskStatus) {
-	Logger.Infof("[StatusUpdate] %s", pretty.Status(status))
+	log.Infof("[StatusUpdate] %s", pretty.Status(status))
 
 	slave := s.slaveFromTaskId(status.GetTaskId().GetValue())
 
@@ -168,23 +169,23 @@ func (s *Scheduler) StatusUpdate(driver scheduler.SchedulerDriver, status *mesos
 }
 
 func (s *Scheduler) FrameworkMessage(driver scheduler.SchedulerDriver, executor *mesos.ExecutorID, slave *mesos.SlaveID, message string) {
-	Logger.Infof("[FrameworkMessage] executor: %s slave: %s message: %s", executor, slave, message)
+	log.Infof("[FrameworkMessage] executor: %s slave: %s message: %s", executor, slave, message)
 }
 
 func (s *Scheduler) SlaveLost(driver scheduler.SchedulerDriver, slave *mesos.SlaveID) {
-	Logger.Infof("[SlaveLost] %s", slave.GetValue())
+	log.Infof("[SlaveLost] %s", slave.GetValue())
 }
 
 func (s *Scheduler) ExecutorLost(driver scheduler.SchedulerDriver, executor *mesos.ExecutorID, slave *mesos.SlaveID, status int) {
-	Logger.Infof("[ExecutorLost] executor: %s slave: %s status: %d", executor, slave, status)
+	log.Infof("[ExecutorLost] executor: %s slave: %s status: %d", executor, slave, status)
 }
 
 func (s *Scheduler) Error(driver scheduler.SchedulerDriver, message string) {
-	Logger.Errorf("[Error] %s", message)
+	log.Errorf("[Error] %s", message)
 }
 
 func (s *Scheduler) Shutdown(driver *scheduler.MesosSchedulerDriver) {
-	Logger.Info("Shutdown triggered, stopping driver")
+	log.Info("Shutdown triggered, stopping driver")
 	driver.Stop(false)
 }
 
@@ -244,7 +245,7 @@ func (s *Scheduler) getPort(targetPort string, offer *mesos.Offer, excludePort i
 	} else {
 		rng, err := utils.ParseRange(targetPort)
 		if err != nil {
-			Logger.Warn(err)
+			log.Warning(err)
 			return -1
 		}
 
@@ -273,7 +274,7 @@ func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Of
 	if err != nil {
 		panic(err) //shouldn't happen
 	}
-	Logger.Debugf("Task data: %s", string(data))
+	log.Debugf("Task data: %s", string(data))
 
 	tcpPort := uint64(s.getPort(Config.TcpPort, offer, -1))
 	udpPort := uint64(s.getPort(Config.UdpPort, offer, int(tcpPort)))
@@ -315,7 +316,7 @@ func (s *Scheduler) createExecutor(offer *mesos.Offer, tcpPort uint64, udpPort u
 		})
 	}
 
-	command := fmt.Sprintf("./%s --log.level %s --tcp %d --udp %d --host %s", Config.Executor, Config.LogLevel, tcpPort, udpPort, offer.GetHostname())
+	command := fmt.Sprintf("./%s --log-level %s --tcp %d --udp %d --host %s", Config.Executor, log.Level.String(), tcpPort, udpPort, offer.GetHostname())
 
 	return &mesos.ExecutorInfo{
 		ExecutorId: util.NewExecutorID(id),
@@ -331,7 +332,7 @@ func (s *Scheduler) slaveFromTaskId(taskId string) string {
 	tokens := strings.SplitN(taskId, "-", 2)
 	slave := tokens[len(tokens)-1]
 	slave = slave[:len(slave)-37] //strip uuid part
-	Logger.Debugf("Slave ID extracted from %s is %s", taskId, slave)
+	log.Debugf("Slave ID extracted from %s is %s", taskId, slave)
 	return slave
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/elodina/siesta"
 	"github.com/elodina/siesta-producer"
 	"github.com/elodina/syslog-service/syslog/avro"
+	"github.com/yanzay/log"
 	"net"
 	"strings"
 	"time"
@@ -89,14 +90,14 @@ func (this *SyslogProducer) String() string {
 }
 
 func (this *SyslogProducer) Start() {
-	Logger.Debug("Starting syslog producer")
+	log.Debug("Starting syslog producer")
 	this.startTCPServer()
 	this.startUDPServer()
 	this.startProducers()
 }
 
 func (this *SyslogProducer) Stop() {
-	Logger.Debug("Stopping syslog producer")
+	log.Debug("Stopping syslog producer")
 
 	for _, closeChannel := range this.closeChannels {
 		closeChannel <- true
@@ -104,12 +105,12 @@ func (this *SyslogProducer) Stop() {
 	close(this.incoming)
 
 	for _, producer := range this.producers {
-		producer.Close(time.Second)
+		producer.Close()
 	}
 }
 
 func (this *SyslogProducer) startTCPServer() {
-	Logger.Debug("Starting TCP server")
+	log.Debug("Starting TCP server")
 	tcpAddr, err := net.ResolveTCPAddr("tcp", this.config.TCPAddr)
 	if err != nil {
 		panic(err)
@@ -137,11 +138,11 @@ func (this *SyslogProducer) startTCPServer() {
 			this.scan(connection)
 		}
 	}()
-	Logger.Infof("Listening for messages at TCP %s", this.config.TCPAddr)
+	log.Infof("Listening for messages at TCP %s", this.config.TCPAddr)
 }
 
 func (this *SyslogProducer) startUDPServer() {
-	Logger.Debug("Starting UDP server")
+	log.Debug("Starting UDP server")
 	udpAddr, err := net.ResolveUDPAddr("udp", this.config.UDPAddr)
 	if err != nil {
 		panic(err)
@@ -165,7 +166,7 @@ func (this *SyslogProducer) startUDPServer() {
 			this.scan(connection)
 		}
 	}()
-	Logger.Infof("Listening for messages at UDP %s", this.config.UDPAddr)
+	log.Infof("Listening for messages at UDP %s", this.config.UDPAddr)
 }
 
 func (this *SyslogProducer) scan(connection net.Conn) {
@@ -188,7 +189,7 @@ func (this *SyslogProducer) startProducers() {
 	}
 
 	for i := 0; i < this.config.NumProducers; i++ {
-		Logger.Debugf("Starting new producer with config: %#v", config)
+		log.Debugf("Starting new producer with config: %#v", config)
 		producer := producer.NewKafkaProducer(config, producer.ByteSerializer, this.config.ValueSerializer, connector)
 		this.producers = append(this.producers, producer)
 		go this.produceRoutine(producer)

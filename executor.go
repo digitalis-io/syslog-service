@@ -19,25 +19,18 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"os"
 
 	"github.com/elodina/syslog-service/syslog"
 	"github.com/mesos/mesos-go/executor"
+	"github.com/yanzay/log"
 )
 
-var logLevel = flag.String("log.level", "info", "Log level. trace|debug|info|warn|error|critical. Defaults to info.")
 var tcpPort = flag.Int("tcp", 0, "TCP port to listen to.")
 var udpPort = flag.Int("udp", 0, "UDP port to listen to.")
 var hostname = flag.String("host", "", "Hostname this executor runs at.")
 
 func main() {
 	flag.Parse()
-	err := syslog.InitLogging(*logLevel)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
 
 	driverConfig := executor.DriverConfig{
 		Executor: syslog.NewExecutor(*tcpPort, *udpPort, *hostname),
@@ -45,14 +38,12 @@ func main() {
 
 	driver, err := executor.NewMesosExecutorDriver(driverConfig)
 	if err != nil {
-		syslog.Logger.Error(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
 	_, err = driver.Start()
 	if err != nil {
-		syslog.Logger.Error(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	driver.Join()
 }

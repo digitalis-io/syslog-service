@@ -23,6 +23,7 @@ import (
 	"github.com/elodina/siesta-producer"
 	"github.com/mesos/mesos-go/executor"
 	mesos "github.com/mesos/mesos-go/mesosproto"
+	"github.com/yanzay/log"
 	"time"
 )
 
@@ -44,19 +45,19 @@ func NewExecutor(tcpPort int, udpPort int, hostname string) *Executor {
 }
 
 func (e *Executor) Registered(driver executor.ExecutorDriver, executor *mesos.ExecutorInfo, framework *mesos.FrameworkInfo, slave *mesos.SlaveInfo) {
-	Logger.Infof("[Registered] framework: %s slave: %s", framework.GetId().GetValue(), slave.GetId().GetValue())
+	log.Infof("[Registered] framework: %s slave: %s", framework.GetId().GetValue(), slave.GetId().GetValue())
 }
 
 func (e *Executor) Reregistered(driver executor.ExecutorDriver, slave *mesos.SlaveInfo) {
-	Logger.Infof("[Reregistered] slave: %s", slave.GetId().GetValue())
+	log.Infof("[Reregistered] slave: %s", slave.GetId().GetValue())
 }
 
 func (e *Executor) Disconnected(executor.ExecutorDriver) {
-	Logger.Info("[Disconnected]")
+	log.Info("[Disconnected]")
 }
 
 func (e *Executor) LaunchTask(driver executor.ExecutorDriver, task *mesos.TaskInfo) {
-	Logger.Infof("[LaunchTask] %s", task)
+	log.Infof("[LaunchTask] %s", task)
 
 	Config.Read(task)
 
@@ -66,7 +67,7 @@ func (e *Executor) LaunchTask(driver executor.ExecutorDriver, task *mesos.TaskIn
 	}
 
 	if _, err := driver.SendStatusUpdate(runStatus); err != nil {
-		Logger.Errorf("Failed to send status update: %s", runStatus)
+		log.Errorf("Failed to send status update: %s", runStatus)
 	}
 
 	go func() {
@@ -75,39 +76,39 @@ func (e *Executor) LaunchTask(driver executor.ExecutorDriver, task *mesos.TaskIn
 		<-e.close
 
 		// finish task
-		Logger.Infof("Finishing task %s", task.GetName())
+		log.Infof("Finishing task %s", task.GetName())
 		finStatus := &mesos.TaskStatus{
 			TaskId: task.GetTaskId(),
 			State:  mesos.TaskState_TASK_FINISHED.Enum(),
 		}
 		if _, err := driver.SendStatusUpdate(finStatus); err != nil {
-			Logger.Errorf("Failed to send status update: %s", finStatus)
+			log.Errorf("Failed to send status update: %s", finStatus)
 			os.Exit(1)
 		}
-		Logger.Infof("Task %s has finished", task.GetName())
+		log.Infof("Task %s has finished", task.GetName())
 		time.Sleep(time.Second)
 		os.Exit(0)
 	}()
 }
 
 func (e *Executor) KillTask(driver executor.ExecutorDriver, id *mesos.TaskID) {
-	Logger.Infof("[KillTask] %s", id.GetValue())
+	log.Infof("[KillTask] %s", id.GetValue())
 	e.producer.Stop()
 	e.close <- struct{}{}
 }
 
 func (e *Executor) FrameworkMessage(driver executor.ExecutorDriver, message string) {
-	Logger.Infof("[FrameworkMessage] %s", message)
+	log.Infof("[FrameworkMessage] %s", message)
 }
 
 func (e *Executor) Shutdown(driver executor.ExecutorDriver) {
-	Logger.Infof("[Shutdown]")
+	log.Infof("[Shutdown]")
 	e.producer.Stop()
 	e.close <- struct{}{}
 }
 
 func (e *Executor) Error(driver executor.ExecutorDriver, message string) {
-	Logger.Errorf("[Error] %s", message)
+	log.Errorf("[Error] %s", message)
 }
 
 func (e *Executor) newSyslogProducer() *SyslogProducer {
