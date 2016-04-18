@@ -17,9 +17,12 @@ package syslog
 
 import (
 	"bufio"
+	"encoding/json"
+	"fmt"
 	"github.com/elodina/siesta"
 	"github.com/elodina/siesta-producer"
 	"github.com/elodina/syslog-service/syslog/avro"
+	"github.com/serejja/go-syslog-parser"
 	"github.com/yanzay/log"
 	"net"
 	"strings"
@@ -27,9 +30,10 @@ import (
 )
 
 type SyslogMessage struct {
-	Message   string
-	Hostname  string
-	Timestamp int64
+	RawMessage string
+	Message    *parser.Message
+	Hostname   string
+	Timestamp  int64
 }
 
 // SyslogProducerConfig defines configuration options for SyslogProducer
@@ -39,6 +43,9 @@ type SyslogProducerConfig struct {
 
 	// Number of producer instances.
 	NumProducers int
+
+	// MetadataRoutines is a number of go routines to read record metadata.
+	MetadataRoutines int
 
 	Topic string
 
@@ -56,8 +63,9 @@ type SyslogProducerConfig struct {
 
 	Namespace string
 
-	// Transformer func(message syslogparser.LogParts, topic string) *sarama.ProducerMessage
 	Transformer func(message *SyslogMessage, topic string) *producer.ProducerRecord
+
+	KeySerializer producer.Serializer
 
 	ValueSerializer producer.Serializer
 }
@@ -65,14 +73,18 @@ type SyslogProducerConfig struct {
 // Creates an empty SyslogProducerConfig.
 func NewSyslogProducerConfig() *SyslogProducerConfig {
 	return &SyslogProducerConfig{
-		Transformer:     simpleTransformFunc,
-		ValueSerializer: producer.StringSerializer,
+		MetadataRoutines: 10,
+		Transformer:      simpleTransformFunc,
+		KeySerializer:    producer.ByteSerializer,
+		ValueSerializer:  producer.StringSerializer,
 	}
 }
 
 type SyslogProducer struct {
 	config        *SyslogProducerConfig
+	parser        *parser.Parser
 	incoming      chan *SyslogMessage
+	metadata      chan (<-chan *producer.RecordMetadata)
 	closeChannels []chan bool
 
 	producers []*producer.KafkaProducer
@@ -81,7 +93,9 @@ type SyslogProducer struct {
 func NewSyslogProducer(config *SyslogProducerConfig) *SyslogProducer {
 	return &SyslogProducer{
 		config:   config,
+		parser:   parser.New(parser.TimestampFormats),
 		incoming: make(chan *SyslogMessage),
+		metadata: make(chan (<-chan *producer.RecordMetadata)),
 	}
 }
 
@@ -93,6 +107,9 @@ func (this *SyslogProducer) Start() {
 	log.Debug("Starting syslog producer")
 	this.startTCPServer()
 	this.startUDPServer()
+	for i := 0; i < this.config.MetadataRoutines; i++ {
+		go this.readMetadata()
+	}
 	this.startProducers()
 }
 
@@ -173,7 +190,12 @@ func (this *SyslogProducer) scan(connection net.Conn) {
 	scanner := bufio.NewScanner(connection)
 	for scanner.Scan() {
 		timestamp := time.Now().UnixNano() / int64(time.Millisecond)
-		this.incoming <- &SyslogMessage{scanner.Text(), this.config.Hostname, timestamp}
+		rawMessage := scanner.Text()
+		message, err := this.parser.ParseString(rawMessage)
+		if err != nil {
+			log.Errorf("Cannot parse syslog message: %s. Original message: %s", err, rawMessage)
+		}
+		this.incoming <- &SyslogMessage{rawMessage, message, this.config.Hostname, timestamp}
 	}
 }
 
@@ -190,7 +212,7 @@ func (this *SyslogProducer) startProducers() {
 
 	for i := 0; i < this.config.NumProducers; i++ {
 		log.Debugf("Starting new producer with config: %#v", config)
-		producer := producer.NewKafkaProducer(config, producer.ByteSerializer, this.config.ValueSerializer, connector)
+		producer := producer.NewKafkaProducer(config, this.config.KeySerializer, this.config.ValueSerializer, connector)
 		this.producers = append(this.producers, producer)
 		go this.produceRoutine(producer)
 	}
@@ -198,25 +220,55 @@ func (this *SyslogProducer) startProducers() {
 
 func (this *SyslogProducer) produceRoutine(producer *producer.KafkaProducer) {
 	for msg := range this.incoming {
-		producer.Send(this.config.Transformer(msg, this.config.Topic))
+		this.metadata <- producer.Send(this.config.Transformer(msg, this.config.Topic))
+	}
+}
+
+func (this *SyslogProducer) readMetadata() {
+	for metadataChan := range this.metadata {
+		metadata := <-metadataChan
+		if metadata.Error != siesta.ErrNoError {
+			log.Error(metadata.Error)
+		}
 	}
 }
 
 func simpleTransformFunc(msg *SyslogMessage, topic string) *producer.ProducerRecord {
-	return &producer.ProducerRecord{Topic: topic, Value: msg.Message}
+	return &producer.ProducerRecord{Topic: topic, Key: msg.Message.Tag, Value: msg.RawMessage}
+}
+
+func jsonTransformFunc(msg *SyslogMessage, topic string) *producer.ProducerRecord {
+	data, err := json.Marshal(msg.Message)
+	if err != nil {
+		panic(err)
+	}
+	return &producer.ProducerRecord{Topic: topic, Key: msg.Message.Tag, Value: data}
 }
 
 func avroTransformFunc(msg *SyslogMessage, topic string) *producer.ProducerRecord {
 	logLine := avro.NewLogLine()
-	logLine.Line = msg.Message
+	logLine.Line = msg.RawMessage
 	logLine.Source = msg.Hostname
 	logLine.Tag = make(map[string]string)
 	logLine.Tag["namespace"] = Config.Namespace
+	logLine.Tag["priority"] = fmt.Sprint(msg.Message.Priority)
+	logLine.Tag["severity"] = fmt.Sprint(msg.Message.Severity)
+	logLine.Tag["facility"] = fmt.Sprint(msg.Message.Facility)
+	logLine.Tag["timestamp"] = msg.Message.Timestamp.Format(time.Stamp)
+	logLine.Tag["hostname"] = msg.Message.Hostname
+	if msg.Message.Tag != "" {
+		logLine.Tag["tag"] = msg.Message.Tag
+	}
+	if msg.Message.PID != -1 {
+		logLine.Tag["PID"] = fmt.Sprint(msg.Message.PID)
+	}
+	logLine.Tag["message"] = msg.Message.Message
+
 	logLine.Timings = make([]*avro.Timing, 0)
 	logLine.Timings = append(logLine.Timings, &avro.Timing{
 		EventName: "received",
 		Value:     msg.Timestamp,
 	})
 
-	return &producer.ProducerRecord{Topic: topic, Value: logLine}
+	return &producer.ProducerRecord{Topic: topic, Key: msg.Message.Tag, Value: logLine}
 }

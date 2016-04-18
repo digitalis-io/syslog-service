@@ -132,9 +132,20 @@ func (e *Executor) newSyslogProducer() *SyslogProducer {
 	config.Topic = Config.Topic
 	config.Hostname = e.hostname
 	config.Namespace = Config.Namespace
+	if Config.Transform == TransformNone {
+		config.Transformer = simpleTransformFunc
+		config.KeySerializer = producer.StringSerializer
+		config.ValueSerializer = producer.StringSerializer
+	}
 	if Config.Transform == TransformAvro {
 		config.Transformer = avroTransformFunc
+		config.KeySerializer = producer.StringSerializer
 		config.ValueSerializer = avro.NewKafkaAvroEncoder(Config.SchemaRegistryUrl).Encode
+	}
+	if Config.Transform == TransformJSON {
+		config.Transformer = jsonTransformFunc
+		config.KeySerializer = producer.StringSerializer
+		config.ValueSerializer = producer.ByteSerializer
 	}
 
 	return NewSyslogProducer(config)

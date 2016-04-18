@@ -46,7 +46,10 @@ func (hs *HttpServer) Start() {
 	http.HandleFunc("/api/stop", handleStop)
 	http.HandleFunc("/api/update", handleUpdate)
 	http.HandleFunc("/api/status", handleStatus)
-	http.ListenAndServe(hs.address, nil)
+	err := http.ListenAndServe(hs.address, nil)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func serveFile(w http.ResponseWriter, r *http.Request) {
@@ -135,5 +138,8 @@ func respond(success bool, message string, w http.ResponseWriter) {
 	} else {
 		w.WriteHeader(500)
 	}
-	w.Write(bytes)
+	_, err = w.Write(bytes)
+	if err != nil {
+		log.Errorf("Http server failed to respond: %s", err)
+	}
 }

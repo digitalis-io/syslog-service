@@ -106,7 +106,10 @@ func (s *Scheduler) SetActive(active bool) {
 	if !s.active {
 		for _, task := range s.cluster.GetAllTasks() {
 			log.Debugf("Killing task %s", task.GetTaskId().GetValue())
-			s.driver.KillTask(task.GetTaskId())
+			_, err := s.driver.KillTask(task.GetTaskId())
+			if err != nil {
+				log.Errorf("Failed to kill task %s: %s", task.GetTaskId().GetValue(), err)
+			}
 		}
 	}
 }
@@ -138,7 +141,10 @@ func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*m
 	if !s.active {
 		log.Debug("Scheduler is inactive. Declining all offers.")
 		for _, offer := range offers {
-			driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+			_, err := driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+			if err != nil {
+				log.Errorf("Failed to decline offer: %s", err)
+			}
 		}
 		return
 	}
@@ -146,8 +152,12 @@ func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*m
 	for _, offer := range offers {
 		declineReason := s.acceptOffer(driver, offer)
 		if declineReason != "" {
-			driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
-			log.Debugf("Declined offer: %s", declineReason)
+			_, err := driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+			if err != nil {
+				log.Errorf("Failed to decline offer: %s", err)
+			} else {
+				log.Debugf("Declined offer: %s", declineReason)
+			}
 		}
 	}
 }
@@ -186,7 +196,10 @@ func (s *Scheduler) Error(driver scheduler.SchedulerDriver, message string) {
 
 func (s *Scheduler) Shutdown(driver *scheduler.MesosSchedulerDriver) {
 	log.Info("Shutdown triggered, stopping driver")
-	driver.Stop(false)
+	_, err := driver.Stop(false)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (s *Scheduler) acceptOffer(driver scheduler.SchedulerDriver, offer *mesos.Offer) string {
@@ -296,7 +309,10 @@ func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Of
 
 	s.cluster.Add(offer.GetSlaveId().GetValue(), task)
 
-	driver.LaunchTasks([]*mesos.OfferID{offer.GetId()}, []*mesos.TaskInfo{task}, &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+	_, err = driver.LaunchTasks([]*mesos.OfferID{offer.GetId()}, []*mesos.TaskInfo{task}, &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+	if err != nil {
+		log.Errorf("Failed to launch tasks: %s", err)
+	}
 }
 
 func (s *Scheduler) createExecutor(offer *mesos.Offer, tcpPort uint64, udpPort uint64) *mesos.ExecutorInfo {
@@ -389,6 +405,9 @@ func getRangeResources(offer *mesos.Offer, resourceName string) []*mesos.Value_R
 
 func uuid() string {
 	b := make([]byte, 16)
-	crand.Read(b)
+	_, err := crand.Read(b)
+	if err != nil {
+		panic(err)
+	}
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }

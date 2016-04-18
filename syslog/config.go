@@ -26,6 +26,7 @@ import (
 const (
 	TransformNone = "none"
 	TransformAvro = "avro"
+	TransformJSON = "json"
 )
 
 var Config *config = &config{

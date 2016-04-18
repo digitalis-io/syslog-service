@@ -45,7 +45,8 @@ func exec() error {
 
 	switch command {
 	case "help":
-		return handleHelp()
+		handleHelp()
+		return nil
 	case "scheduler":
 		return handleScheduler()
 	case "start", "stop":
@@ -59,7 +60,7 @@ func exec() error {
 	return fmt.Errorf("Unknown command: %s\n", command)
 }
 
-func handleHelp() error {
+func handleHelp() {
 	fmt.Println(`Usage:
   help: show this message
   scheduler: configure scheduler
@@ -68,7 +69,6 @@ func handleHelp() error {
   update: update configuration
   status: get current status of cluster
 More help you can get from ./cli <command> -h`)
-	return nil
 }
 
 func handleStatus() error {
@@ -140,7 +140,7 @@ func handleUpdate() error {
 	flag.StringVar(&syslog.Config.Topic, "topic", "", "Topic to produce data to.")
 	flag.StringVar(&syslog.Config.TcpPort, "tcp.port", "", "TCP port range to accept.")
 	flag.StringVar(&syslog.Config.UdpPort, "udp.port", "", "UDP port range to accept.")
-	flag.StringVar(&syslog.Config.Transform, "transform", "", "Transofmation to apply to each message. none|avro")
+	flag.StringVar(&syslog.Config.Transform, "transform", "", "Transofmation to apply to each message. none|avro|json")
 	flag.StringVar(&syslog.Config.SchemaRegistryUrl, "schema.registry.url", "", "Avro Schema Registry url for transform=avro")
 	flag.IntVar(&syslog.Config.NumProducers, "num.producers", math.MinInt64, "Number of producers to launch.")
 	flag.IntVar(&syslog.Config.ChannelSize, "channel.size", math.MinInt64, "Producer buffer size.")
