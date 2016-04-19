@@ -22,11 +22,11 @@ import (
 	"github.com/elodina/siesta"
 	"github.com/elodina/siesta-producer"
 	"github.com/elodina/syslog-service/syslog/avro"
-	"github.com/serejja/go-syslog-parser"
 	"github.com/yanzay/log"
 	"net"
 	"strings"
 	"time"
+	"github.com/elodina/go-syslog-parser"
 )
 
 type SyslogMessage struct {
@@ -194,6 +194,7 @@ func (this *SyslogProducer) scan(connection net.Conn) {
 		message, err := this.parser.ParseString(rawMessage)
 		if err != nil {
 			log.Errorf("Cannot parse syslog message: %s. Original message: %s", err, rawMessage)
+			continue
 		}
 		this.incoming <- &SyslogMessage{rawMessage, message, this.config.Hostname, timestamp}
 	}
