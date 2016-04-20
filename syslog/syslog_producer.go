@@ -18,7 +18,6 @@ package syslog
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"github.com/elodina/siesta"
 	"github.com/elodina/siesta-producer"
 	"github.com/elodina/syslog-service/syslog/avro"
@@ -247,29 +246,21 @@ func jsonTransformFunc(msg *SyslogMessage, topic string) *producer.ProducerRecor
 }
 
 func avroTransformFunc(msg *SyslogMessage, topic string) *producer.ProducerRecord {
-	logLine := avro.NewLogLine()
-	logLine.Line = msg.RawMessage
-	logLine.Source = msg.Hostname
-	logLine.Tag = make(map[string]string)
-	logLine.Tag["namespace"] = Config.Namespace
-	logLine.Tag["priority"] = fmt.Sprint(msg.Message.Priority)
-	logLine.Tag["severity"] = fmt.Sprint(msg.Message.Severity)
-	logLine.Tag["facility"] = fmt.Sprint(msg.Message.Facility)
-	logLine.Tag["timestamp"] = msg.Message.Timestamp.Format(time.Stamp)
-	logLine.Tag["hostname"] = msg.Message.Hostname
+	message := avro.NewSyslogMessage()
+	message.Priority = int64(msg.Message.Priority)
+	message.Severity = int64(msg.Message.Severity)
+	message.Facility = int64(msg.Message.Facility)
+	message.Timestamp = msg.Message.Timestamp.Format(time.Stamp)
+	message.Hostname = msg.Message.Hostname
 	if msg.Message.Tag != "" {
-		logLine.Tag["tag"] = msg.Message.Tag
+		message.Tag = msg.Message.Tag
 	}
 	if msg.Message.PID != -1 {
-		logLine.Tag["PID"] = fmt.Sprint(msg.Message.PID)
+		message.Pid = msg.Message.PID
 	}
-	logLine.Tag["message"] = msg.Message.Message
+	message.Message = msg.Message.Message
+	message.Tags["namespace"] = Config.Namespace
+	message.Tags["source_hostname"] = msg.Hostname
 
-	logLine.Timings = make([]*avro.Timing, 0)
-	logLine.Timings = append(logLine.Timings, &avro.Timing{
-		EventName: "received",
-		Value:     msg.Timestamp,
-	})
-
-	return &producer.ProducerRecord{Topic: topic, Key: msg.Message.Tag, Value: logLine}
+	return &producer.ProducerRecord{Topic: topic, Key: msg.Message.Tag, Value: message}
 }

@@ -1,0 +1,47 @@
+{
+    "type": "record",
+    "name": "SyslogMessage",
+    "fields": [
+        {
+            "name": "priority",
+            "type": "long"
+        },
+        {
+            "name": "severity",
+            "type": "long"
+        },
+        {
+            "name": "facility",
+            "type": "long"
+        },
+        {
+            "name": "timestamp",
+            "type": "string"
+        },
+        {
+            "name": "hostname",
+            "type": "string"
+        },
+        {
+            "name": "tag",
+            "type": ["null", "string"],
+            "default": null
+        },
+        {
+            "name": "pid",
+            "type": ["null", "long"],
+            "default": null
+        },
+        {
+            "name": "message",
+            "type": "string"
+        },
+        {
+            "name": "tags",
+            "type": {
+                "type": "map",
+                "values": "string"
+            }
+        }
+    ]
+}
