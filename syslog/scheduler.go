@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 
 	"github.com/elodina/go-mesos-utils"
 	"github.com/elodina/go-mesos-utils/pretty"
@@ -32,6 +31,8 @@ import (
 	util "github.com/mesos/mesos-go/mesosutil"
 	"github.com/mesos/mesos-go/scheduler"
 	"github.com/yanzay/log"
+	"sync"
+	"time"
 )
 
 var sched *Scheduler // This is needed for HTTP server to be able to update this scheduler
@@ -39,8 +40,8 @@ var sched *Scheduler // This is needed for HTTP server to be able to update this
 type Scheduler struct {
 	httpServer *HttpServer
 	cluster    *Cluster
-	active     bool
 	activeLock sync.Mutex
+	reconciler *utils.Reconciler
 	driver     scheduler.SchedulerDriver
 	labels     string
 }
@@ -58,6 +59,8 @@ func (s *Scheduler) Start() error {
 
 	s.cluster = NewCluster()
 	s.cluster.Load()
+	s.reconciler = utils.NewReconciler()
+	s.reconciler.ReconcileDelay = 20 * time.Second
 
 	listenAddr := s.listenAddr()
 	s.httpServer = NewHttpServer(listenAddr)
@@ -108,8 +111,8 @@ func (s *Scheduler) SetActive(active bool) {
 	s.activeLock.Lock()
 	defer s.activeLock.Unlock()
 
-	s.active = active
-	if !s.active {
+	s.cluster.active = active
+	if !s.cluster.active {
 		for _, task := range s.cluster.GetAllTasks() {
 			log.Debugf("Killing task %s", task.TaskID)
 			_, err := s.driver.KillTask(util.NewTaskID(task.TaskID))
@@ -127,12 +130,14 @@ func (s *Scheduler) Registered(driver scheduler.SchedulerDriver, id *mesos.Frame
 	s.cluster.Save()
 
 	s.driver = driver
+	s.reconciler.ImplicitReconcile(s.driver)
 }
 
 func (s *Scheduler) Reregistered(driver scheduler.SchedulerDriver, master *mesos.MasterInfo) {
 	log.Infof("[Reregistered] master: %s:%d", master.GetHostname(), master.GetPort())
 
 	s.driver = driver
+	s.reconciler.ImplicitReconcile(s.driver)
 }
 
 func (s *Scheduler) Disconnected(scheduler.SchedulerDriver) {
@@ -147,7 +152,7 @@ func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*m
 	s.activeLock.Lock()
 	defer s.activeLock.Unlock()
 
-	if !s.active {
+	if !s.cluster.active {
 		log.Debug("Scheduler is inactive. Declining all offers.")
 		for _, offer := range offers {
 			_, err := driver.DeclineOffer(offer.GetId(), &mesos.Filters{RefuseSeconds: proto.Float64(1)})
@@ -171,6 +176,7 @@ func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*m
 		}
 	}
 
+	s.reconciler.ExplicitReconcile(s.cluster.GetTaskIDs(), s.driver)
 	s.cluster.Save()
 }
 
@@ -189,6 +195,7 @@ func (s *Scheduler) StatusUpdate(driver scheduler.SchedulerDriver, status *mesos
 		s.cluster.Remove(hostname)
 	}
 
+	s.reconciler.Update(status)
 	s.cluster.Save()
 }
 
@@ -294,7 +301,7 @@ func (s *Scheduler) getPort(targetPort string, offer *mesos.Offer, excludePort i
 }
 
 func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Offer) {
-	taskName := fmt.Sprintf("syslog-%s", offer.GetSlaveId().GetValue())
+	taskName := fmt.Sprintf("syslog-%s", offer.GetHostname())
 	taskId := &mesos.TaskID{
 		Value: proto.String(fmt.Sprintf("%s-%s", taskName, uuid())),
 	}
@@ -332,7 +339,7 @@ func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Of
 }
 
 func (s *Scheduler) createExecutor(offer *mesos.Offer, tcpPort uint64, udpPort uint64) *mesos.ExecutorInfo {
-	name := fmt.Sprintf("syslog-%s", offer.GetSlaveId().GetValue())
+	name := fmt.Sprintf("syslog-%s", offer.GetHostname())
 	id := fmt.Sprintf("%s-%s", name, uuid())
 
 	uris := []*mesos.CommandInfo_URI{
