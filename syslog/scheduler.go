@@ -56,20 +56,26 @@ func (s *Scheduler) Start() error {
 		return err
 	}
 
+	s.cluster = NewCluster()
+	s.cluster.Load()
+
 	listenAddr := s.listenAddr()
 	s.httpServer = NewHttpServer(listenAddr)
 	go s.httpServer.Start()
 
-	s.cluster = NewCluster()
-
 	s.labels = os.Getenv("STACK_LABELS")
 
 	frameworkInfo := &mesos.FrameworkInfo{
-		User:       proto.String(Config.User),
-		Name:       proto.String(Config.FrameworkName),
-		Role:       proto.String(Config.FrameworkRole),
-		Checkpoint: proto.Bool(true),
-		Labels:     utils.StringToLabels(s.labels),
+		User:            proto.String(Config.User),
+		Name:            proto.String(Config.FrameworkName),
+		Role:            proto.String(Config.FrameworkRole),
+		FailoverTimeout: proto.Float64(float64(Config.FrameworkTimeout / 1e9)),
+		Checkpoint:      proto.Bool(true),
+		Labels:          utils.StringToLabels(s.labels),
+	}
+
+	if s.cluster.frameworkID != "" {
+		frameworkInfo.Id = util.NewFrameworkID(s.cluster.frameworkID)
 	}
 
 	driverConfig := scheduler.DriverConfig{
@@ -105,10 +111,10 @@ func (s *Scheduler) SetActive(active bool) {
 	s.active = active
 	if !s.active {
 		for _, task := range s.cluster.GetAllTasks() {
-			log.Debugf("Killing task %s", task.GetTaskId().GetValue())
-			_, err := s.driver.KillTask(task.GetTaskId())
+			log.Debugf("Killing task %s", task.TaskID)
+			_, err := s.driver.KillTask(util.NewTaskID(task.TaskID))
 			if err != nil {
-				log.Errorf("Failed to kill task %s: %s", task.GetTaskId().GetValue(), err)
+				log.Errorf("Failed to kill task %s: %s", task.TaskID, err)
 			}
 		}
 	}
@@ -116,6 +122,9 @@ func (s *Scheduler) SetActive(active bool) {
 
 func (s *Scheduler) Registered(driver scheduler.SchedulerDriver, id *mesos.FrameworkID, master *mesos.MasterInfo) {
 	log.Infof("[Registered] framework: %s master: %s:%d", id.GetValue(), master.GetHostname(), master.GetPort())
+
+	s.cluster.frameworkID = id.GetValue()
+	s.cluster.Save()
 
 	s.driver = driver
 }
@@ -146,6 +155,7 @@ func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*m
 				log.Errorf("Failed to decline offer: %s", err)
 			}
 		}
+		s.cluster.Save()
 		return
 	}
 
@@ -160,6 +170,8 @@ func (s *Scheduler) ResourceOffers(driver scheduler.SchedulerDriver, offers []*m
 			}
 		}
 	}
+
+	s.cluster.Save()
 }
 
 func (s *Scheduler) OfferRescinded(driver scheduler.SchedulerDriver, id *mesos.OfferID) {
@@ -169,13 +181,15 @@ func (s *Scheduler) OfferRescinded(driver scheduler.SchedulerDriver, id *mesos.O
 func (s *Scheduler) StatusUpdate(driver scheduler.SchedulerDriver, status *mesos.TaskStatus) {
 	log.Infof("[StatusUpdate] %s", pretty.Status(status))
 
-	slave := s.slaveFromTaskId(status.GetTaskId().GetValue())
+	hostname := s.hostnameFromTaskId(status.GetTaskId().GetValue())
 
 	if status.GetState() == mesos.TaskState_TASK_FAILED || status.GetState() == mesos.TaskState_TASK_KILLED ||
 		status.GetState() == mesos.TaskState_TASK_LOST || status.GetState() == mesos.TaskState_TASK_ERROR ||
 		status.GetState() == mesos.TaskState_TASK_FINISHED {
-		s.cluster.Remove(slave)
+		s.cluster.Remove(hostname)
 	}
+
+	s.cluster.Save()
 }
 
 func (s *Scheduler) FrameworkMessage(driver scheduler.SchedulerDriver, executor *mesos.ExecutorID, slave *mesos.SlaveID, message string) {
@@ -192,6 +206,8 @@ func (s *Scheduler) ExecutorLost(driver scheduler.SchedulerDriver, executor *mes
 
 func (s *Scheduler) Error(driver scheduler.SchedulerDriver, message string) {
 	log.Errorf("[Error] %s", message)
+
+	driver.Abort()
 }
 
 func (s *Scheduler) Shutdown(driver *scheduler.MesosSchedulerDriver) {
@@ -203,8 +219,8 @@ func (s *Scheduler) Shutdown(driver *scheduler.MesosSchedulerDriver) {
 }
 
 func (s *Scheduler) acceptOffer(driver scheduler.SchedulerDriver, offer *mesos.Offer) string {
-	if s.cluster.Exists(offer.GetSlaveId().GetValue()) {
-		return fmt.Sprintf("Server on slave %s is already running.", offer.GetSlaveId().GetValue())
+	if s.cluster.Exists(offer.GetHostname()) {
+		return fmt.Sprintf("Server on hostname %s is already running.", offer.GetHostname())
 	} else {
 		declineReason := s.match(offer)
 		if declineReason == "" {
@@ -292,7 +308,7 @@ func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Of
 	tcpPort := uint64(s.getPort(Config.TcpPort, offer, -1))
 	udpPort := uint64(s.getPort(Config.UdpPort, offer, int(tcpPort)))
 
-	task := &mesos.TaskInfo{
+	taskInfo := &mesos.TaskInfo{
 		Name:     proto.String(taskName),
 		TaskId:   taskId,
 		SlaveId:  offer.GetSlaveId(),
@@ -307,9 +323,9 @@ func (s *Scheduler) launchTask(driver scheduler.SchedulerDriver, offer *mesos.Of
 		Labels: utils.StringToLabels(s.labels),
 	}
 
-	s.cluster.Add(offer.GetSlaveId().GetValue(), task)
+	s.cluster.Add(NewTask(offer.GetHostname(), taskInfo))
 
-	_, err = driver.LaunchTasks([]*mesos.OfferID{offer.GetId()}, []*mesos.TaskInfo{task}, &mesos.Filters{RefuseSeconds: proto.Float64(1)})
+	_, err = driver.LaunchTasks([]*mesos.OfferID{offer.GetId()}, []*mesos.TaskInfo{taskInfo}, &mesos.Filters{RefuseSeconds: proto.Float64(1)})
 	if err != nil {
 		log.Errorf("Failed to launch tasks: %s", err)
 	}
@@ -344,12 +360,12 @@ func (s *Scheduler) createExecutor(offer *mesos.Offer, tcpPort uint64, udpPort u
 	}
 }
 
-func (s *Scheduler) slaveFromTaskId(taskId string) string {
+func (s *Scheduler) hostnameFromTaskId(taskId string) string {
 	tokens := strings.SplitN(taskId, "-", 2)
-	slave := tokens[len(tokens)-1]
-	slave = slave[:len(slave)-37] //strip uuid part
-	log.Debugf("Slave ID extracted from %s is %s", taskId, slave)
-	return slave
+	hostname := tokens[len(tokens)-1]
+	hostname = hostname[:len(hostname)-37] //strip uuid part
+	log.Debugf("Hostname extracted from %s is %s", taskId, hostname)
+	return hostname
 }
 
 func (s *Scheduler) resolveDeps() error {

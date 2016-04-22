@@ -18,6 +18,7 @@ package syslog
 import (
 	"bufio"
 	"encoding/json"
+	"github.com/elodina/go-syslog-parser"
 	"github.com/elodina/siesta"
 	"github.com/elodina/siesta-producer"
 	"github.com/elodina/syslog-service/syslog/avro"
@@ -25,7 +26,6 @@ import (
 	"net"
 	"strings"
 	"time"
-	"github.com/elodina/go-syslog-parser"
 )
 
 type SyslogMessage struct {

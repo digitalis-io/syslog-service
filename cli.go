@@ -91,9 +91,11 @@ func handleScheduler() error {
 
 	flag.StringVar(&syslog.Config.Master, "master", "", "Mesos Master addresses.")
 	flag.StringVar(&api, "api", "", "Binding host:port for http/artifact server. Optional if SM_API env is set.")
+	flag.StringVar(&syslog.Config.Storage, "storage", "", "Storage for cluster state. Examples: file:syslog.json; zk:master:2181/syslog-service")
 	flag.StringVar(&syslog.Config.User, "user", "", "Mesos user. Defaults to current system user")
 	flag.StringVar(&syslog.Config.FrameworkName, "framework.name", syslog.Config.FrameworkName, "Framework name.")
 	flag.StringVar(&syslog.Config.FrameworkRole, "framework.role", syslog.Config.FrameworkRole, "Framework role.")
+	flag.DurationVar(&syslog.Config.FrameworkTimeout, "framework.timeout", syslog.Config.FrameworkTimeout, "Framework failover timeout.")
 	flag.StringVar(&syslog.Config.Namespace, "namespace", syslog.Config.Namespace, "Namespace.")
 
 	flag.Parse()
@@ -104,6 +106,10 @@ func handleScheduler() error {
 
 	if syslog.Config.Master == "" {
 		return errors.New("--master flag is required.")
+	}
+
+	if syslog.Config.Storage == "" {
+		return errors.New("--storage flag is required.")
 	}
 
 	return new(syslog.Scheduler).Start()

@@ -21,6 +21,7 @@ import (
 	mesos "github.com/mesos/mesos-go/mesosproto"
 	"github.com/yanzay/log"
 	"regexp"
+	"time"
 )
 
 const (
@@ -30,25 +31,28 @@ const (
 )
 
 var Config *config = &config{
-	FrameworkName: "syslog-kafka",
-	FrameworkRole: "*",
-	Cpus:          0.1,
-	Mem:           64,
-	NumProducers:  1,
-	ChannelSize:   10000,
-	TcpPort:       "auto",
-	UdpPort:       "auto",
-	Transform:     "none",
+	FrameworkName:    "syslog-kafka",
+	FrameworkRole:    "*",
+	FrameworkTimeout: 30 * 24 * time.Hour,
+	Cpus:             0.1,
+	Mem:              64,
+	NumProducers:     1,
+	ChannelSize:      10000,
+	TcpPort:          "auto",
+	UdpPort:          "auto",
+	Transform:        "none",
 }
 
 var executorMask = regexp.MustCompile("executor.*")
 
 type config struct {
-	Api                string
-	Master             string
-	FrameworkName      string
-	FrameworkRole      string
-	User               string
+	Api                string        `json:"-"`
+	Master             string        `json:"-"`
+	FrameworkName      string        `json:"-"`
+	FrameworkRole      string        `json:"-"`
+	FrameworkTimeout   time.Duration `json:"-"`
+	Storage            string        `json:"-"`
+	User               string        `json:"-"`
 	Cpus               float64
 	Mem                float64
 	TcpPort            string
@@ -86,7 +90,9 @@ func (c *config) String() string {
 master:              %s
 framework name:      %s
 framework role:      %s
+framework timeout:   %s
 user:                %s
+storage:             %s
 cpus:                %.2f
 mem:                 %.2f
 TCP port:            %s
@@ -100,7 +106,7 @@ topic:               %s
 transform:           %s
 schema registry url: %s
 namespace:           %s
-`, c.Api, c.Master, c.FrameworkName, c.FrameworkRole, c.User, c.Cpus, c.Mem, c.TcpPort, c.UdpPort,
-		c.Executor, c.ProducerProperties, c.NumProducers, c.ChannelSize, c.BrokerList, c.Topic, c.Transform,
-		c.SchemaRegistryUrl, c.Namespace)
+`, c.Api, c.Master, c.FrameworkName, c.FrameworkRole, c.FrameworkTimeout, c.User, c.Storage, c.Cpus, c.Mem,
+		c.TcpPort, c.UdpPort, c.Executor, c.ProducerProperties, c.NumProducers, c.ChannelSize, c.BrokerList,
+		c.Topic, c.Transform, c.SchemaRegistryUrl, c.Namespace)
 }
