@@ -26,6 +26,7 @@ import (
 
 type Cluster struct {
 	frameworkID string
+	active      bool
 	tasks       map[string]*Task
 	taskLock    sync.Mutex
 	storage     utils.Storage
@@ -56,7 +57,7 @@ func (c *Cluster) Add(task *Task) {
 
 	if _, exists := c.tasks[task.Hostname]; exists {
 		// this should never happen. would mean a bug if so
-		panic(fmt.Sprintf("syscol task on host %s already exists", task.Hostname))
+		panic(fmt.Sprintf("syslog task on host %s already exists", task.Hostname))
 	}
 
 	c.tasks[task.Hostname] = task
@@ -67,9 +68,8 @@ func (c *Cluster) Remove(hostname string) {
 	defer c.taskLock.Unlock()
 
 	if _, exists := c.tasks[hostname]; !exists {
-		fmt.Println(c.tasks)
-		// this should never happen. would mean a bug if so
-		panic(fmt.Sprintf("syscol task on host %s does not exist", hostname))
+		// can happen during reconciliation
+		log.Warningf("syslog task on host %s does not exist, ignoring", hostname)
 	}
 
 	delete(c.tasks, hostname)
@@ -87,9 +87,22 @@ func (c *Cluster) GetAllTasks() []*Task {
 	return tasks
 }
 
+func (c *Cluster) GetTaskIDs() []string {
+	c.taskLock.Lock()
+	defer c.taskLock.Unlock()
+
+	tasks := make([]string, 0)
+	for _, task := range c.tasks {
+		tasks = append(tasks, task.TaskID)
+	}
+
+	return tasks
+}
+
 func (c *Cluster) Save() {
 	jsonMap := make(map[string]interface{})
 	jsonMap["frameworkID"] = c.frameworkID
+	jsonMap["active"] = c.active
 	jsonMap["config"] = Config
 	jsonMap["tasks"] = c.GetAllTasks()
 
@@ -114,6 +127,11 @@ func (c *Cluster) Load() {
 		panic(err)
 	}
 	err = json.Unmarshal(jsonMap["frameworkID"], &c.frameworkID)
+	if err != nil {
+		panic(err)
+	}
+
+	err = json.Unmarshal(jsonMap["active"], &c.active)
 	if err != nil {
 		panic(err)
 	}
