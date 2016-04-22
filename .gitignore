@@ -29,3 +29,4 @@ syslog/syslog
 executor
 framework
 syslog-service
+cli

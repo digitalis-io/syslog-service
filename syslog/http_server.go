@@ -22,7 +22,6 @@ import (
 	"net/url"
 	"strings"
 
-	mesos "github.com/mesos/mesos-go/mesosproto"
 	"github.com/yanzay/log"
 	"strconv"
 )
@@ -93,18 +92,8 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	response := "cluster:\n"
 	for host, task := range tasks {
 		response += fmt.Sprintf("  server: %d\n", host)
-		response += fmt.Sprintf("    id: %s\n", task.GetTaskId().GetValue())
-		response += fmt.Sprintf("    slave id: %s\n", task.GetSlaveId().GetValue())
-		for _, resource := range task.GetResources() {
-			switch *resource.Type {
-			case mesos.Value_SCALAR:
-				response += fmt.Sprintf("    %s: %f\n", resource.GetName(), resource.GetScalar().GetValue())
-			case mesos.Value_RANGES:
-				response += fmt.Sprintf("    %s: %s\n", resource.GetName(), resource.GetRanges())
-			case mesos.Value_SET:
-				response += fmt.Sprintf("    %s: %s\n", resource.GetName(), resource.GetSet())
-			}
-		}
+		response += fmt.Sprintf("    id: %s\n", task.TaskID)
+		response += fmt.Sprintf("    slave id: %s\n", task.SlaveID)
 	}
 	respond(true, response, w)
 }
